@@ -1,5 +1,7 @@
 {
     "device": "cuda:6",
+    "mlflow_path": "./mlruns",
+    "experiment_name": "trial_experiment_cata",
     "data_dir": "./event_data",
     "architecture": "CNN_GRU",
     "batch_size": 1,

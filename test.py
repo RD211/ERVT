@@ -31,7 +31,7 @@ def main(args):
         raise ValueError("Please provide a JSON configuration file.")
 
     # also dump the args to a JSON file in MLflow artifact
-    with open(os.path.join(mlflow.get_artifact_uri(), "args.json"), 'w') as f:
+    with open('/users/mlica/eye/mlruns/297962202741595725/6f29512f979b447c83454a418bfa65a9/artifacts/args.json', 'w') as f:
         json.dump(vars(args), f)
 
     # Define your model, optimizer, and criterion

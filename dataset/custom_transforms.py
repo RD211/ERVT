@@ -131,7 +131,29 @@ class EventSlicesToVoxelGrid:
 
                     voxel_grid[c][non_zero_entries[c]] = (voxel_grid[c][non_zero_entries[c]] - mean_c) / (std_c + 1e-10)
             voxel_grids.append(voxel_grid)
+        print(np.array(voxel_grids).astype(np.float32).shape)
         return np.array(voxel_grids).astype(np.float32)
+    
+class EventSlicesToRVT:
+    def __init__(self, sequence_len, height, width):
+        self.sequence_len = sequence_len
+        self.height = height
+        self.width = width
+
+    def __call__(self, event_slices):
+        E = np.zeros((2, self.sequence_len, self.height, self.width))
+        print(len(event_slices))
+        print(event_slices[0].shape, event_slices[0][0], event_slices[0][1]) 
+        print(event_slices[0])
+        a = []
+        for e in event_slices[0]:
+            a.append(e[0])
+
+        a = np.array(a)
+        print(f"Unique: {np.unique(a)}, {np.unique(a).shape}")
+        exit(0)
+        return 0
+
 
 
 class SplitSequence:
@@ -261,5 +283,13 @@ class NormalizeLabel:
         """
         labels[:, 0] = labels[:, 0] / self.pseudo_width
         labels[:, 1] = labels[:, 1] / self.pseudo_height
+        print(labels.shape)
         return labels
 
+class ToBoundingBox:
+    def __init__(self, box_height, box_width):
+        self.box_height = box_height
+        self.box_width = box_width
+    
+    def __call__(self, labels):
+        return np.array([[label[0] - self.box_width/2, label[1] - self.box_height/2, self.box_width, self.box_height] for label in labels])
