@@ -133,7 +133,6 @@ class EventSlicesToVoxelGrid:
             voxel_grids.append(voxel_grid)
         return np.array(voxel_grids).astype(np.float32)
 
-
 class SplitSequence:
     def __init__(self, sub_seq_length, stride):
         """

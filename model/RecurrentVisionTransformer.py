@@ -1,7 +1,9 @@
 from functools import reduce
 import torch
 import torch.nn as nn
-from typing import Optional, Tuple
+import math
+from typing import Optional, Union, Tuple, List, Type
+from argparse import Namespace
 
 class DWSConvLSTM2d(nn.Module):
     """LSTM with (depthwise-separable) Conv option in NCHW [channel-first] format.
@@ -67,6 +69,69 @@ class DWSConvLSTM2d(nn.Module):
         h_t = output_gate * torch.tanh(c_t)
 
         return h_t, c_t
+
+class GLU(nn.Module):
+    def __init__(self,
+                 dim_in: int,
+                 dim_out: int,
+                 channel_last: bool,
+                 act_layer: Type[nn.Module],
+                 bias: bool = True):
+        super().__init__()
+        # Different activation functions / versions of the gated linear unit:
+        # - ReGLU:  Relu
+        # - SwiGLU: Swish/SiLU
+        # - GeGLU:  GELU
+        # - GLU:    Sigmoid
+        # seem to be the most promising once.
+        # Extensive quantitative eval in table 1: https://arxiv.org/abs/2102.11972
+        # Section 2 for explanation and implementation details: https://arxiv.org/abs/2002.05202
+        # NOTE: Pytorch has a native GLU implementation: https://pytorch.org/docs/stable/generated/torch.nn.GLU.html?highlight=glu#torch.nn.GLU
+        proj_out_dim = dim_out*2
+        self.proj = nn.Linear(dim_in, proj_out_dim, bias=bias) if channel_last else \
+            nn.Conv2d(dim_in, proj_out_dim, kernel_size=1, stride=1, bias=bias)
+        self.channel_dim = -1 if channel_last else 1
+
+        self.act_layer = act_layer()
+
+    def forward(self, x: torch.Tensor):
+        x, gate = torch.tensor_split(self.proj(x), 2, dim=self.channel_dim)
+        return x * self.act_layer(gate)
+
+class MLP(nn.Module):
+    def __init__(self,
+                 dim: int,
+                 channel_last: bool,
+                 expansion_ratio: int,
+                 act_layer: Type[nn.Module],
+                 gated: bool = True,
+                 bias: bool = True,
+                 drop_prob: float = 0.):
+        super().__init__()
+        inner_dim = int(dim * expansion_ratio)
+        if gated:
+            # To keep the number of parameters (approx) constant regardless of whether glu == True
+            # Section 2 for explanation: https://arxiv.org/abs/2002.05202
+            #inner_dim = round(inner_dim * 2 / 3)
+            #inner_dim = math.ceil(inner_dim * 2 / 3 / 32) * 32 # multiple of 32
+            #inner_dim = round(inner_dim * 2 / 3 / 32) * 32 # multiple of 32
+            inner_dim = math.floor(inner_dim * 2 / 3 / 32) * 32 # multiple of 32
+            proj_in = GLU(dim_in=dim, dim_out=inner_dim, channel_last=channel_last, act_layer=act_layer, bias=bias)
+        else:
+            proj_in = nn.Sequential(
+                nn.Linear(in_features=dim, out_features=inner_dim, bias=bias) if channel_last else \
+                    nn.Conv2d(in_channels=dim, out_channels=inner_dim, kernel_size=1, stride=1, bias=bias),
+                act_layer(),
+            )
+        self.net = nn.Sequential(
+            proj_in,
+            nn.Dropout(p=drop_prob),
+            nn.Linear(in_features=inner_dim, out_features=dim, bias=bias) if channel_last else \
+                nn.Conv2d(in_channels=inner_dim, out_channels=dim, kernel_size=1, stride=1, bias=bias)
+        )
+
+    def forward(self, x):
+        return self.net(x)
     
 class LayerScale(nn.Module):
     def __init__(self, dim: int, init_values: float = 1e-5, inplace: bool = False):
@@ -169,33 +234,36 @@ class UnifiedBlockGridAttention(nn.Module):
         return attn_output
 
 class RVTBlock(nn.Module):
-    def __init__(self, input_channels: int, output_channels: int, kernel_size: int, stride: int, partition_size: int, dim_head: int = 32):
+    def __init__(self, args, **kwargs):
         super().__init__()
+        args = Namespace(**vars(args), **kwargs)
 
-        self.conv = nn.Conv2d(input_channels, output_channels, kernel_size=kernel_size, stride=stride, padding=kernel_size//2)
-        self.block_sa = UnifiedBlockGridAttention(channels=output_channels, partition_size=partition_size, dim_head=dim_head, mode='block')
+        self.conv = nn.Conv2d(args.input_channels, args.output_channels, kernel_size=args.kernel_size, stride=args.stride, padding=args.kernel_size//2)
+        self.block_sa = UnifiedBlockGridAttention(channels=args.output_channels, partition_size=args.partition_size, dim_head=args.dim_head, mode='block')
         
-        self.ln = nn.LayerNorm(output_channels)
+        self.ln = nn.LayerNorm(args.output_channels)
 
+        self.mlpb = MLP(dim=args.dim, channel_last=True, expansion_ratio=args.expansion_ratio, act_layer=args.mlp_act_layer, gated = args.mlp_gated, bias = args.mlp_bias)
+        self.mlpg = MLP(dim=args.dim, channel_last=True, expansion_ratio=args.expansion_ratio, act_layer=args.mlp_act_layer, gated = args.mlp_gated, bias = args.mlp_bias)
         self.mlp1 = nn.Sequential(
-            nn.Linear(output_channels, output_channels),
+            nn.Linear(args.output_channels, args.output_channels),
             nn.ReLU(),
-            nn.Linear(output_channels, output_channels)
+            nn.Linear(args.output_channels, args.output_channels)
         )
 
         self.mlp2 = nn.Sequential(
-            nn.Linear(output_channels, output_channels),
+            nn.Linear(args.output_channels, args.output_channels),
             nn.ReLU(),
-            nn.Linear(output_channels, output_channels)
+            nn.Linear(args.output_channels, args.output_channels)
         )
 
-        self.grid_sa = UnifiedBlockGridAttention(channels=output_channels, partition_size=partition_size, dim_head=dim_head, mode='grid')
+        self.grid_sa = UnifiedBlockGridAttention(channels=args.output_channels, partition_size=args.partition_size, dim_head=args.dim_head, mode='grid')
 
         # Currently the LayerScale is not working here
         # self.ls1 = LayerScale(output_channels)
         # self.ls2 = LayerScale(output_channels)
 
-        self.lstm = DWSConvLSTM2d(dim=output_channels)
+        self.lstm = DWSConvLSTM2d(dim=args.output_channels)
 
     def forward(self, x: torch.Tensor, h: Optional[torch.Tensor], c: Optional[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         
@@ -224,14 +292,33 @@ class RVTBlock(nn.Module):
 
         return x_unflattened, c
 
-class RVT(nn.Module):
-    def __init__(self, args):
+class LinearHead(nn.Module):
+    """
+    FC Layer detection head.
+    """
+    def __init__(self, args, **kwargs):
         super().__init__()
-        self.n_time_bins = args.n_time_bins
+        args = Namespace(**vars(args), **kwargs)
+        self.args = args
+
+        stride_factor = reduce(lambda x, y: x * y, [s["stride"] for s in args.stages])
+        dim = int(args.stages[-1]["channels"] * ((args.width * args.spatial_factor) // stride_factor) * ((args.height * args.spatial_factor) // stride_factor))
+
+        self.linear = nn.Linear(dim, 2)
+
+    def forward(self, x):
+        return self.linear(x)
+
+class RVT(nn.Module):
+    def __init__(self, args, **kwargs):
+        super().__init__()
+
+        args = Namespace(**vars(args), **kwargs)
+        self.args = args
 
         self.stages = nn.ModuleList([
             RVTBlock(
-                input_channels=args.stages[i-1]["channels"] if i > 0 else self.n_time_bins,
+                input_channels=args.stages[i-1]["channels"] if i > 0 else args.n_time_bins,
                 output_channels=args.stages[i]["channels"],
                 kernel_size=args.stages[i]["kernel_size"],
                 stride=args.stages[i]["stride"],
@@ -241,12 +328,7 @@ class RVT(nn.Module):
             for i in range(len(args.stages))
         ])
 
-        width = args.sensor_width
-        height = args.sensor_height
-        spatial_factor = args.spatial_factor
-        stride_factor = reduce(lambda x, y: x * y, [s["stride"] for s in args.stages])
-        final_size = args.stages[-1]["channels"] * ((width * spatial_factor) // stride_factor) * ((height * spatial_factor) // stride_factor) 
-        self.output_layer = nn.Linear(int(final_size), 2)
+        self.detection = LinearHead(args)
 
     def forward(self, x):
         B, N, C, H, W = x.size()
@@ -276,7 +358,7 @@ class RVT(nn.Module):
             xt = torch.flatten(xt, 1)
 
             # We take the last stage output and feed it to the output layer
-            final_output = self.output_layer(xt)
+            final_output = self.detection(xt)
             outputs.append(final_output)
 
         coordinates = torch.stack(outputs, dim=1) 
