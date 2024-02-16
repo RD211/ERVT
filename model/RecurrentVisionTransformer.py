@@ -10,7 +10,9 @@ CHANNELS = {
 }
 
 KERNELS = [7, 3, 3, 3]
-STRIDES = [4, 2, 2, 2]
+STRIDES = [2, 2, 2, 2]
+GRID_SIZE = [2, 5, 2, 2]
+NR_OF_STAGES = 2
 
 class DWSConvLSTM2d(nn.Module):
     """LSTM with (depthwise-separable) Conv option in NCHW [channel-first] format.
@@ -224,7 +226,7 @@ class RVTBlock(nn.Module):
         self.conv = nn.Conv2d(input_channels, output_channels, kernel_size=kernel_size, stride=stride, padding=kernel_size//2)
         
         # Block SA
-        self.block_sa = BlockSelfAttention(channels=output_channels, window_size= 5 if stage==2 else 2)
+        self.block_sa = BlockSelfAttention(channels=output_channels, window_size=GRID_SIZE[stage])
         
         # LayerNorm
         self.ln = nn.LayerNorm(output_channels)
@@ -244,7 +246,7 @@ class RVTBlock(nn.Module):
 
 
         # Grid SA
-        self.grid_sa = GridAttention(channels=output_channels, grid_size=5 if stage==2 else 2)
+        self.grid_sa = GridAttention(channels=output_channels, grid_size=GRID_SIZE[stage])
 
 
         # Layer scale
@@ -255,31 +257,31 @@ class RVTBlock(nn.Module):
         self.lstm = DWSConvLSTM2d(dim=output_channels)
 
     def forward(self, x, c, h):
-        
         # Permute from (B, H, W, C) to (B, C, H, W) for conv2d
         x = x.permute(0, 3, 1, 2)
         x_conv = self.conv(x)
         x_conv = x_conv.permute(0, 2, 3, 1)
         x_conv = self.ln(x_conv)
 
+
         x_bsa = self.block_sa(x_conv)
         x_bsa = x_bsa + x_conv
         x_bsa = self.ln(x_bsa)
         x_bsa = self.mlp1(x_bsa)
-        x_bsa = self.ls1(x_bsa)
+        # x_bsa = self.ls1(x_bsa)
         
 
         x_gsa = self.grid_sa(x_bsa)
         x_gsa = x_gsa + x_bsa
         x_gsa = self.ln(x_gsa)
         x_gsa = self.mlp2(x_gsa)
-        x_gsa = self.ls2(x_gsa)
+        # x_gsa = self.ls2(x_gsa)
 
 
         x_unflattened = x_gsa.permute(0, 3, 1, 2)
         x_unflattened, c = self.lstm(x_unflattened, (c, h))
         x_unflattened = x_unflattened.permute(0, 2, 3, 1)
-        
+
         return x_unflattened, c
 
     
@@ -292,11 +294,11 @@ class RVT(nn.Module):
         # Define the RVT stages
         self.stages = nn.ModuleList([
             RVTBlock(stage=i, n_time_bins=self.n_time_bins if i == 0 else None, model_type=model_type) 
-            for i in range(4)
+            for i in range(NR_OF_STAGES)
         ])
 
         # Output layer to get coordinates, assuming the output of the last LSTM has 256 channels for the 'T' model
-        self.output_layer = nn.Linear(20480, 2)
+        self.output_layer = nn.Linear(19200, 2)
 
     def forward(self, x):
         B, N, C, H, W = x.size()
@@ -308,14 +310,14 @@ class RVT(nn.Module):
         outputs = []
 
         # Pass the input through each of the RVT stages
-        for t in range(x.size(1)):  # iterate over timesteps in the sequence
+        for t in range(N):  # iterate over timesteps in the sequence
             xt = x[:, t, :, :, :]  # Get the tensor for the current timestep
             for i, stage in enumerate(self.stages):
                 lstm_state = lstm_states[i]
                 h, c = stage(xt, *lstm_state)
                 lstm_states[i] = (c, h.permute(0, 3, 1, 2))
                 xt = h
-
+            # sum per batch
             final_output = self.output_layer(xt.view(B, -1))
             outputs.append(final_output)
 

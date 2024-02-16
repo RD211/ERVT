@@ -15,6 +15,7 @@ from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
     EventSlicesToVoxelGrid, SliceByTimeEventsTargets
 import tonic.transforms as transforms
 from tonic import SlicedDataset, DiskCachedDataset
+from model.RecurrentVisionTransformer import RVT
 
 
 def main(args):
