@@ -15,6 +15,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from model.BaselineEyeTrackingModel import CNN_GRU
+from model.RecurrentVisionTransformer import RVT
 from utils.training_utils import train_epoch, validate_epoch, top_k_checkpoints
 from utils.metrics import weighted_MSELoss
 from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
@@ -85,6 +86,13 @@ def main(args):
 
         # Define your model, optimizer, and criterion
         model = eval(args.architecture)(args).to(args.device)
+        # print the number of parameters of the model
+        print(model)
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        non_trainable_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+        print("Model has:", trainable_params, "trainable parameters")
+        print("Model has:", non_trainable_params, "non-trainable parameters")
+
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
         if args.loss == "mse":
