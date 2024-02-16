@@ -5,6 +5,22 @@
     "data_dir": "./event_data",
     "run_name": "trial_run",
     "architecture": "RVT",
+    "stages": [
+        {
+            "kernel_size": 7,
+            "channels": 32,
+            "stride": 2,
+            "partition_size": 2,
+            "dim_head": 32
+        },
+        {
+            "kernel_size": 3,
+            "channels": 64,
+            "stride": 2,
+            "partition_size": 5,
+            "dim_head": 32
+        }
+    ],
     "batch_size": 1,
     "spatial_factor": 0.125,
     "temporal_subsample_factor": 0.2,
