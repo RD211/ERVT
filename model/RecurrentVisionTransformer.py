@@ -236,56 +236,42 @@ class UnifiedBlockGridAttention(nn.Module):
 class RVTBlock(nn.Module):
     def __init__(self, args, **kwargs):
         super().__init__()
-        args = Namespace(**vars(args), **kwargs)
-
+        args = Namespace(**args, **kwargs)
         self.conv = nn.Conv2d(args.input_channels, args.output_channels, kernel_size=args.kernel_size, stride=args.stride, padding=args.kernel_size//2)
         self.block_sa = UnifiedBlockGridAttention(channels=args.output_channels, partition_size=args.partition_size, dim_head=args.dim_head, mode='block')
         
         self.ln = nn.LayerNorm(args.output_channels)
 
-        self.mlpb = MLP(dim=args.dim, channel_last=True, expansion_ratio=args.expansion_ratio, act_layer=args.mlp_act_layer, gated = args.mlp_gated, bias = args.mlp_bias)
-        self.mlpg = MLP(dim=args.dim, channel_last=True, expansion_ratio=args.expansion_ratio, act_layer=args.mlp_act_layer, gated = args.mlp_gated, bias = args.mlp_bias)
-        self.mlp1 = nn.Sequential(
-            nn.Linear(args.output_channels, args.output_channels),
-            nn.ReLU(),
-            nn.Linear(args.output_channels, args.output_channels)
-        )
-
-        self.mlp2 = nn.Sequential(
-            nn.Linear(args.output_channels, args.output_channels),
-            nn.ReLU(),
-            nn.Linear(args.output_channels, args.output_channels)
-        )
+        self.mlpb = MLP(dim=args.output_channels, channel_last=True, expansion_ratio=args.expansion_ratio, act_layer=args.mlp_act_layer, gated = args.mlp_gated, bias = args.mlp_bias, drop_prob=args.drop_prob)
+        self.mlpg = MLP(dim=args.output_channels, channel_last=True, expansion_ratio=args.expansion_ratio, act_layer=args.mlp_act_layer, gated = args.mlp_gated, bias = args.mlp_bias, drop_prob=args.drop_prob)
 
         self.grid_sa = UnifiedBlockGridAttention(channels=args.output_channels, partition_size=args.partition_size, dim_head=args.dim_head, mode='grid')
 
-        # Currently the LayerScale is not working here
-        # self.ls1 = LayerScale(output_channels)
-        # self.ls2 = LayerScale(output_channels)
+        self.ls1 = LayerScale(args.output_channels)
+        self.ls2 = LayerScale(args.output_channels)
 
         self.lstm = DWSConvLSTM2d(dim=args.output_channels)
 
     def forward(self, x: torch.Tensor, h: Optional[torch.Tensor], c: Optional[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
-        
         x_conv = self.conv(x)
         x_conv = x_conv.permute(0, 2, 3, 1)
         x_conv = self.ln(x_conv)
-
+        B, H, W, C = x_conv.shape
 
         x_bsa = self.block_sa(x_conv)
         x_bsa = x_bsa + x_conv
         x_bsa = self.ln(x_bsa)
-        x_bsa = self.mlp1(x_bsa)
-        # For some reason the LayerScale is not working
-        # x_bsa = self.ls1(x_bsa)
+        x_bsa = self.mlpb(x_bsa)
         
+        # Clueless why this does not work
+        # x_bsa = self.ls1(x_bsa)
 
         x_gsa = self.grid_sa(x_bsa)
         x_gsa = x_gsa + x_bsa
         x_gsa = self.ln(x_gsa)
-        x_gsa = self.mlp2(x_gsa)
-        # x_gsa = self.ls2(x_gsa)
+        x_gsa = self.mlpg(x_gsa)
 
+        # x_gsa = self.ls2(x_gsa)
 
         x_unflattened = x_gsa.permute(0, 3, 1, 2)
         x_unflattened, c = self.lstm(x_unflattened, (c, h))
@@ -302,7 +288,7 @@ class LinearHead(nn.Module):
         self.args = args
 
         stride_factor = reduce(lambda x, y: x * y, [s["stride"] for s in args.stages])
-        dim = int(args.stages[-1]["channels"] * ((args.width * args.spatial_factor) // stride_factor) * ((args.height * args.spatial_factor) // stride_factor))
+        dim = int(args.stages[-1]["output_channels"] * ((args.sensor_width * args.spatial_factor) // stride_factor) * ((args.sensor_height * args.spatial_factor) // stride_factor))
 
         self.linear = nn.Linear(dim, 2)
 
@@ -316,14 +302,19 @@ class RVT(nn.Module):
         args = Namespace(**vars(args), **kwargs)
         self.args = args
 
+        act_layer_to_activation = {
+            "gelu": nn.GELU,
+            "relu": nn.ReLU
+        }
+
+        def replace_act_layer(args):
+            args["mlp_act_layer"] = act_layer_to_activation[args["mlp_act_layer"]]
+            return args
+
         self.stages = nn.ModuleList([
             RVTBlock(
-                input_channels=args.stages[i-1]["channels"] if i > 0 else args.n_time_bins,
-                output_channels=args.stages[i]["channels"],
-                kernel_size=args.stages[i]["kernel_size"],
-                stride=args.stages[i]["stride"],
-                partition_size=args.stages[i]["partition_size"],
-                dim_head=args.stages[i]["dim_head"]
+                replace_act_layer({**(args.__dict__), **args.stages[i]}),
+                input_channels=args.stages[i-1]["output_channels"] if i > 0 else args.n_time_bins,
             )
             for i in range(len(args.stages))
         ])
