@@ -19,6 +19,8 @@ from model.RecurrentVisionTransformer import RVT
 import torch
 from torch.profiler import profile, record_function, ProfilerActivity
 
+from utils.timer import CudaTimer
+
 
 def main(args):
     # Load hyperparameters from JSON configuration file
@@ -83,18 +85,9 @@ def main(args):
     # This is only used in combination of include_incomplete=True during testing
     test_loader = DataLoader(test_data, batch_size=args.batch_size, shuffle=False, \
                             num_workers=int(os.cpu_count()-2))
-
-    # load weights from a checkpoint
-    if args.checkpoint:
-        model.load_state_dict(torch.load(args.checkpoint))
-    else:
-        raise ValueError("Please provide a checkpoint file.")
     
     # evaluate on the validation set and save the predictions into a csv file.
     model.eval()
-
-    import time
-    time_taken = 0
     with open(args.output_path, 'w', newline='') as csvfile:
         csv_writer = csv.writer(csvfile, delimiter=',')
         # add column names 'row_id', 'x', 'y'
@@ -103,25 +96,8 @@ def main(args):
         for batch_idx, (data, target_placeholder) in enumerate(test_loader):
             data = data.to(args.device)
 
-            # if time_taken == 0:
-            #     for i in range(20):
-            #         output = model(data)
-            with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
-             profile_memory=True,  # Optionally profile memory allocations
-             record_shapes=True,   # Optionally record tensor shapes
-             with_stack=True       # Optionally capture the stack trace
-             ) as prof:
-                with record_function("model_inference"):
-            # starter, ender = torch.cuda.Event(enable_timing=True),   torch.cuda.Event(enable_timing=True)
-            # starter.record()
-                    output = model(data)
-            # ender.record()
-            # torch.cuda.synchronize()
-            # time_taken += starter.elapsed_time(ender)/1000
-
-
-            # time_taken += time.time() - start_time
-            print(f"--- Inference took per sample: {time_taken/(batch_idx+1)} seconds ---")
+            with CudaTimer(device=args.device, timer_name="model_inference"):
+                output = model(data)
 
             # Important! 
             # cast the output back to the downsampled sensor space (80x60)
@@ -134,9 +110,7 @@ def main(args):
                     row_to_write.insert(0, row_id)
                     csv_writer.writerow(row_to_write)
                     row_id += 1
-    print(f"--- Inference took per sample: {time_taken/len(test_loader)} seconds ---")
-    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))  # Sort by GPU time
-    prof.export_chrome_trace("trace.json")  # Export to Chrome trace format for visualization
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
