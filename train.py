@@ -15,11 +15,12 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from model.BaselineEyeTrackingModel import CNN_GRU
+from model.RecurrentVisionTransformer import RVT
 from utils.training_utils import train_epoch, validate_epoch, top_k_checkpoints
 from utils.metrics import weighted_MSELoss
 from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
     TemporalSubsample, NormalizeLabel, SliceLongEventsToShort, \
-    EventSlicesToVoxelGrid, SliceByTimeEventsTargets
+    EventSlicesToVoxelGrid, SliceByTimeEventsTargets, RandomSpatialAugmentor
 import tonic.transforms as transforms
 from tonic import SlicedDataset, DiskCachedDataset
 
@@ -54,7 +55,14 @@ def train(model, train_loader, val_loader, criterion, optimizer, args):
 
     return model
 
+# class CustomDiskCachedDataset(DiskCachedDataset):
+#     def __init__(self, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
 
+#     def __getitem__(self, index):
+#         input, target = super().__getitem__(index)
+#         return input, self.transform(target)
+    
 def main(args):
     # Load hyperparameters from JSON configuration file
     if args.config_file:
@@ -85,6 +93,13 @@ def main(args):
 
         # Define your model, optimizer, and criterion
         model = eval(args.architecture)(args).to(args.device)
+        # print the number of parameters of the model
+        print(model)
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        non_trainable_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+        print("Model has:", trainable_params, "trainable parameters")
+        print("Model has:", non_trainable_params, "non-trainable parameters")
+
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
         if args.loss == "mse":
@@ -138,9 +153,11 @@ def main(args):
         train_data = SlicedDataset(train_data_orig, train_slicer, transform=post_slicer_transform, metadata_path=f"./metadata/3et_train_tl_{args.train_length}_ts{args.train_stride}_ch{args.n_time_bins}")
         val_data = SlicedDataset(val_data_orig, val_slicer, transform=post_slicer_transform, metadata_path=f"./metadata/3et_val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}")
 
+        augmentation = RandomSpatialAugmentor(dataset_wh = (1, 1), augm_config=args.data_augmentation) 
+
         # cache the dataset to disk to speed up training. The first epoch will be slow, but the following epochs will be fast.
-        train_data = DiskCachedDataset(train_data, cache_path=f'./cached_dataset/train_tl_{args.train_length}_ts{args.train_stride}_ch{args.n_time_bins}')
-        val_data = DiskCachedDataset(val_data, cache_path=f'./cached_dataset/val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}')
+        train_data = DiskCachedDataset(train_data, cache_path=f'./cached_dataset/train_tl_{args.train_length}_ts{args.train_stride}_ch{args.n_time_bins}', transforms=augmentation)
+        val_data = DiskCachedDataset(val_data, cache_path=f'./cached_dataset/val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}', transforms=augmentation)
 
         # Finally we wrap the dataset with pytorch dataloader
         train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, \

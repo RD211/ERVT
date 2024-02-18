@@ -5,6 +5,10 @@ from tonic.slicers import (
 )
 from tonic.functional import to_voxel_grid_numpy
 from typing import Any, List, Tuple
+import torch as th
+from dataclasses import dataclass
+import argparse
+import matplotlib.pyplot as plt 
 
 class SliceByTimeEventsTargets:
     """
@@ -132,7 +136,6 @@ class EventSlicesToVoxelGrid:
                     voxel_grid[c][non_zero_entries[c]] = (voxel_grid[c][non_zero_entries[c]] - mean_c) / (std_c + 1e-10)
             voxel_grids.append(voxel_grid)
         return np.array(voxel_grids).astype(np.float32)
-
 
 class SplitSequence:
     def __init__(self, sub_seq_length, stride):
@@ -263,3 +266,70 @@ class NormalizeLabel:
         labels[:, 1] = labels[:, 1] / self.pseudo_height
         return labels
 
+
+@dataclass
+class ZoomOutState:
+    active: bool
+    x0: int
+    y0: int
+    zoom_out_factor: float
+
+
+@dataclass
+class RotationState:
+    active: bool
+    angle_deg: float
+
+
+@dataclass
+class AugmentationState:
+    apply_h_flip: bool
+    rotation: RotationState
+    apply_zoom_in: bool
+    zoom_out: ZoomOutState
+
+def torch_uniform_sample_scalar(min_value: float, max_value: float):
+    assert max_value >= min_value, f'{max_value=} is smaller than {min_value=}'
+    if max_value == min_value:
+        return min_value
+    return min_value + (max_value - min_value) * th.rand(1).item()
+
+class RandomSpatialAugmentor:
+    def __init__(self,
+                 dataset_wh: Tuple[int, int],
+                 augm_config):
+        
+        def convert_to_namespace(d):
+            for key, value in d.items():
+                if isinstance(value, dict):
+                    d[key] = convert_to_namespace(value)
+            return argparse.Namespace(**d)
+
+        augm_config = convert_to_namespace(augm_config['random'])
+        self.dataset_wh = dataset_wh
+
+        self.h_flip_prob = augm_config.prob_hflip
+
+        self.augm_state = AugmentationState(
+            apply_h_flip=False,
+            rotation=RotationState(active=False, angle_deg=0.0),
+            apply_zoom_in=False,
+            zoom_out=ZoomOutState(active=False, x0=0, y0=0, zoom_out_factor=1.0))
+
+    def randomize_augmentation(self):
+        self.augm_state.apply_h_flip = self.h_flip_prob > th.rand(1).item()
+
+    def h_flip(self, data):
+        if len(data.shape) == 2:
+            data[:, 0] = 1 -  data[:, 0]
+            return data
+        elif len(data.shape) == 4:
+            return np.flip(data, axis=-1).copy()
+       
+
+    def __call__(self, input, target):
+        self.randomize_augmentation()
+        if self.augm_state.apply_h_flip:
+            return self.h_flip(input), self.h_flip(target)
+
+        return (input, target)
