@@ -324,7 +324,6 @@ class RVT(nn.Module):
     def forward(self, x):
         B, N, C, H, W = x.size()
 
-        x = x.permute(0, 1, 3, 4, 2)
 
         lstm_states = [None] * len(self.stages)
         outputs = []
@@ -334,7 +333,6 @@ class RVT(nn.Module):
             
             # We get the input for the current time step
             xt = x[:, t, :, :, :] 
-            xt = xt.permute(0, 3, 1, 2)
 
             # For each stage we apply the RVTBlock
             for i, stage in enumerate(self.stages):

@@ -1,9 +1,9 @@
 {
-    "device": "cuda:0",
+    "device": "cuda:7",
     "mlflow_path": "./mlruns",
-    "experiment_name": "trial_experiment",
+    "experiment_name": "debug",
     "data_dir": "./event_data",
-    "run_name": "trial_run",
+    "run_name": "debugging3_prb05_cache",
     "architecture": "RVT",
     "expansion_ratio": 2,
     "mlp_act_layer": "gelu",

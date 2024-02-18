@@ -16,6 +16,8 @@ from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
 import tonic.transforms as transforms
 from tonic import SlicedDataset, DiskCachedDataset
 from model.RecurrentVisionTransformer import RVT
+import torch
+from torch.profiler import profile, record_function, ProfilerActivity
 
 
 def main(args):
@@ -32,8 +34,9 @@ def main(args):
         raise ValueError("Please provide a JSON configuration file.")
 
     # also dump the args to a JSON file in MLflow artifact
-    with open(os.path.join(mlflow.get_artifact_uri(), "args.json"), 'w') as f:
-        json.dump(vars(args), f)
+    # print(mlflow.get_artifact_uri())
+    # with open(os.path.join(mlflow.get_artifact_uri(), "args.json"), 'w') as f:
+    #     json.dump(vars(args), f)
 
     # Define your model, optimizer, and criterion
     model = eval(args.architecture)(args).to(args.device)
@@ -88,6 +91,10 @@ def main(args):
         raise ValueError("Please provide a checkpoint file.")
     
     # evaluate on the validation set and save the predictions into a csv file.
+    model.eval()
+
+    import time
+    time_taken = 0
     with open(args.output_path, 'w', newline='') as csvfile:
         csv_writer = csv.writer(csvfile, delimiter=',')
         # add column names 'row_id', 'x', 'y'
@@ -95,7 +102,22 @@ def main(args):
         row_id = 0
         for batch_idx, (data, target_placeholder) in enumerate(test_loader):
             data = data.to(args.device)
-            output = model(data)
+
+            if time_taken == 0:
+                for i in range(20):
+                    output = model(data)
+            start_time = time.time()  # Start time for inference
+            with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
+             profile_memory=True,  # Optionally profile memory allocations
+             record_shapes=True,   # Optionally record tensor shapes
+             with_stack=True       # Optionally capture the stack trace
+             ) as prof:
+                with record_function("model_inference"):
+                    model(data)
+
+            time_taken += time.time() - start_time
+            print(f"--- Inference took per sample: {time.time() - start_time} seconds ---")
+
 
             # Important! 
             # cast the output back to the downsampled sensor space (80x60)
@@ -108,7 +130,9 @@ def main(args):
                     row_to_write.insert(0, row_id)
                     csv_writer.writerow(row_to_write)
                     row_id += 1
-
+    print(f"--- Inference took per sample: {time_taken/len(test_loader)} seconds ---")
+    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=10))  # Sort by GPU time
+    prof.export_chrome_trace("trace.json")  # Export to Chrome trace format for visualization
 
 if __name__ == "__main__":
     import argparse
