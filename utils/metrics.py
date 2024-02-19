@@ -97,3 +97,19 @@ class weighted_MSELoss(nn.Module):
             return torch.sum(batch_loss)
         else:
             return batch_loss
+        
+class weighted_RMSE(nn.Module):
+    def __init__(self, weights, reduction='mean'):
+        super().__init__()
+        self.weights = weights
+        self.reduction = reduction
+        self.mseloss = nn.MSELoss(reduction='none')
+
+    def forward(self, inputs, targets):
+        batch_loss = self.mseloss(inputs, targets) * self.weights
+        if self.reduction == 'mean':
+            return torch.sqrt(torch.mean(batch_loss))
+        elif self.reduction == 'sum':
+            return torch.sqrt*(torch.sum(batch_loss))
+        else:
+            return batch_loss

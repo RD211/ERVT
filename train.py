@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 from model.BaselineEyeTrackingModel import CNN_GRU
 from model.RecurrentVisionTransformer import RVT
 from utils.training_utils import train_epoch, validate_epoch, top_k_checkpoints
-from utils.metrics import weighted_MSELoss
+from utils.metrics import weighted_MSELoss, weighted_RMSE
 from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
     TemporalSubsample, NormalizeLabel, SliceLongEventsToShort, \
     EventSlicesToVoxelGrid, SliceByTimeEventsTargets, RandomSpatialAugmentor
@@ -106,6 +106,9 @@ def main(args):
             criterion = nn.MSELoss()
         elif args.loss == "weighted_mse":
             criterion = weighted_MSELoss(weights=torch.tensor((args.sensor_width/args.sensor_height, 1)).to(args.device), \
+                                         reduction='mean')
+        elif args.loss == "weighted_rmse":
+            criterion = weighted_RMSE(weights=torch.tensor((args.sensor_width/args.sensor_height, 1)).to(args.device), \
                                          reduction='mean')
         else:
             raise ValueError("Invalid loss name")

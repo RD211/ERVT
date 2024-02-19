@@ -4,6 +4,7 @@ import torch.nn as nn
 import math
 from typing import Optional, Union, Tuple, List, Type
 from argparse import Namespace
+from torchvision.ops import FeaturePyramidNetwork
 
 class DWSConvLSTM2d(nn.Module):
     """LSTM with (depthwise-separable) Conv option in NCHW [channel-first] format.
@@ -293,7 +294,40 @@ class LinearHead(nn.Module):
         self.linear = nn.Linear(dim, 2)
 
     def forward(self, x):
+        x = torch.flatten(x, 1)
         return self.linear(x)
+    
+class FPN(nn.Module):
+    """
+    Feature Pyramid Network head.
+    """
+    def __init__(self, args, **kwargs):
+        #TODO: only supports 2
+        super().__init__()
+        args = Namespace(**vars(args), **kwargs)
+        self.args = args
+
+        stages_channels = []
+        for stage in args.stages:
+            stages_channels.append(stage.output_channels)
+        in_channels = stages_channels[args.fpn_stages]
+
+        self.fpn = FeaturePyramidNetwork(in_channels, out_channels = args.fpn_out_channels, norm_layer = nn.LayerNorm(args.fpn_out_channels))
+        self.keys = [("feat_" + str(i)) for i in range(len(in_channels))]
+
+        self.l1 = nn.Linear(1, 2)
+        self.l2 = nn.Linear(1, 2)
+        self.head = nn.Linear(4, 2)
+
+    def forward(self, x: list):
+        # feature maps are supposed to be in increasing depth order
+        input_dict = dict(zip(self.keys, x))
+        outs = self.fpn(input_dict)
+        out1 = self.l1(torch.flatten(outs.items()[0][1], 1))
+        out2 = self.l2(torch.flatten(outs.items()[1][1], 1))
+        out = torch.cat([out1, out2], 1)
+        out = torch.nn.functional.relu(out)        
+        return self.head(out)
 
 class RVT(nn.Module):
     def __init__(self, args, **kwargs):
@@ -343,10 +377,8 @@ class RVT(nn.Module):
                 lstm_states[i] = (c, xt)
 
                 
-            # Flatten the tensor
-            xt = torch.flatten(xt, 1)
-
             # We take the last stage output and feed it to the output layer
+            # change here between different heads
             final_output = self.detection(xt)
             outputs.append(final_output)
 
