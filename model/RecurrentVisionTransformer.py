@@ -4,7 +4,6 @@ import torch.nn as nn
 import math
 from typing import Optional, Union, Tuple, List, Type
 from argparse import Namespace
-from utils.timer import CudaTimer
 
 class DWSConvLSTM2d(nn.Module):
     """LSTM with (depthwise-separable) Conv option in NCHW [channel-first] format.
@@ -146,34 +145,29 @@ class LayerScale(nn.Module):
         # Applying the scaling operation. If 'inplace' is True, 'mul_' is used to modify the input tensor directly.
         return x.mul_(self.gamma) if self.inplace else x * self.gamma
     
-class SelfAttentionCl(nn.Module):
-    """ Channels-last multi-head self-attention (B, ..., C) """
-    def __init__(
-            self,
-            dim: int,
-            dim_head: int = 32,
-            bias: bool = True):
+class TorchMHSAWrapperCl(nn.Module):
+    def __init__(self, dim: int, dim_head: int = 32, bias: bool = True):
         super().__init__()
-        self.num_heads = dim // dim_head
-        self.dim_head = dim_head
-        self.scale = dim_head ** -0.5
+        # Ensure the input dimension is divisible by the dimension of each head.
+        assert dim % dim_head == 0, "Input dimension must be divisible by the dimension of each head."
+        
+        num_heads = dim // dim_head  # Calculate the number of attention heads.
+        self.mha = nn.MultiheadAttention(embed_dim=dim, num_heads=num_heads, bias=bias, batch_first=True)
 
-        self.qkv = nn.Linear(dim, dim * 3, bias=bias)
-        self.proj = nn.Linear(dim, dim, bias=bias)
-
-
-    def forward(self, x: torch.Tensor):
-        B = x.shape[0]
-        restore_shape = x.shape[:-1]
-
-        q, k, v = self.qkv(x).view(B, -1, self.num_heads, self.dim_head * 3).transpose(1, 2).chunk(3, dim=3)
-
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = attn.softmax(dim=-1)
-
-        x = (attn @ v).transpose(1, 2).reshape(restore_shape + (-1,))
-        x = self.proj(x)
-        return x
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        restore_shape = x.shape  # Store the original shape to restore it after attention.
+        B, C = restore_shape[0], restore_shape[-1]  # Extract batch size and channel dimensions.
+        
+        # Reshape input to (B, Seq Len, C) to fit the expected input shape of nn.MultiheadAttention.
+        x = x.view(B, -1, C)
+        
+        # Apply multi-head self-attention. 
+        attn_output, _ = self.mha(query=x, key=x, value=x)
+        
+        # Reshape the output back to the original input shape.
+        attn_output = attn_output.reshape(restore_shape)
+        
+        return attn_output
 
 class UnifiedBlockGridAttention(nn.Module):
     def __init__(self, channels: int, partition_size: int, dim_head: int = 32, mode: str = 'block'):
@@ -185,7 +179,7 @@ class UnifiedBlockGridAttention(nn.Module):
         self.mode = mode
         self.ln = nn.LayerNorm(channels)
         self.ls = LayerScale(channels)
-        self.mhsa = SelfAttentionCl(dim=channels, dim_head=dim_head)
+        self.mhsa = TorchMHSAWrapperCl(dim=channels, dim_head=dim_head)
 
     def partition(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -258,26 +252,31 @@ class RVTBlock(nn.Module):
 
         self.lstm = DWSConvLSTM2d(dim=args.output_channels)
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor, h: Optional[torch.Tensor], c: Optional[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         x_conv = self.conv(x)
         x_conv = x_conv.permute(0, 2, 3, 1)
         x_conv = self.ln(x_conv)
+        B, H, W, C = x_conv.shape
 
         x_bsa = self.block_sa(x_conv)
         x_bsa = x_bsa + x_conv
         x_bsa = self.ln(x_bsa)
         x_bsa = self.mlpb(x_bsa)
+        
+        # Clueless why this does not work
+        # x_bsa = self.ls1(x_bsa)
 
         x_gsa = self.grid_sa(x_bsa)
         x_gsa = x_gsa + x_bsa
         x_gsa = self.ln(x_gsa)
         x_gsa = self.mlpg(x_gsa)
 
-        return x_gsa.permute(0, 3, 1, 2)
-    
-    def forward_with_lstm(self, x: torch.Tensor, h: Optional[torch.Tensor], c: Optional[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
-        x, c = self.lstm(x, (c, h))
-        return x, c
+        # x_gsa = self.ls2(x_gsa)
+
+        x_unflattened = x_gsa.permute(0, 3, 1, 2)
+        x_unflattened, c = self.lstm(x_unflattened, (c, h))
+
+        return x_unflattened, c
 
 class LinearHead(nn.Module):
     """
@@ -325,45 +324,32 @@ class RVT(nn.Module):
     def forward(self, x):
         B, N, C, H, W = x.size()
 
-        # Initial LSTM states
-        lstm_states = (None, None)
 
-        # Outputs that are to be fed in the detection head
-        accumulated_outputs = []
+        lstm_states = [None] * len(self.stages)
+        outputs = []
 
-        # We process the tensor column wise, i.e. finishing each stage before moving to the next one for each time step in parallel
-        with CudaTimer(device=x.device, timer_name="RVT Time step loop"):
+        # We iterate over the time dimension
+        for t in range(N):
+            
+            # We get the input for the current time step
+            xt = x[:, t, :, :, :] 
 
+            # For each stage we apply the RVTBlock
             for i, stage in enumerate(self.stages):
-
-                # If we are at the first stage we use the input tensor, otherwise we use the output from the previous stage
-                # We reshape it into B*N, C, H, W to process all time steps in parallel
-                xts = x.view(B*N, C, H, W) if i == 0 else xts.view(B*N, xts.size(2), xts.size(3), xts.size(4))
-
-                # Process the stage
-                xts = stage(xts)
-
-                # We get the new output shape and reshape it back to B, N, C, H, W
-                _, C, H, W = xts.size()
-                xts = xts.view(B, N, C, H, W)
-
-                # We now process the time steps sequentially but only the lstm part.
-                for t in range(N):
-                    xt = xts[:, t, :, :, :]
-                    xt, c = stage.forward_with_lstm(xt, lstm_states[0], lstm_states[1])
-                    lstm_states = (c, xt)
-                    
-                    # If we are at the last stage we flatten the tensor and append it to the accumulated outputs
-                    if i == len(self.stages) - 1:
-                        accumulated_outputs.append(torch.flatten(xt, 1))
+                lstm_state = lstm_states[i] if lstm_states[i] is not None else (None, None)
+                xt, c = stage(xt, lstm_state[0], lstm_state[1])
                 
-                # We reset them back.
-                lstm_states = (None, None)
-                    
-        with CudaTimer(device=x.device, timer_name="RVT Detection head"):
-            # Stack accumulated outputs along the time dimension and then apply the linear head in parallel
-            stacked_outputs = torch.stack(accumulated_outputs, dim=1)
-            final_output = self.detection(stacked_outputs.view(B*N, -1))
-            coordinates = final_output.view(B, N, -1)
+                # We save it for the next time step
+                lstm_states[i] = (c, xt)
+
+                
+            # Flatten the tensor
+            xt = torch.flatten(xt, 1)
+
+            # We take the last stage output and feed it to the output layer
+            final_output = self.detection(xt)
+            outputs.append(final_output)
+
+        coordinates = torch.stack(outputs, dim=1) 
 
         return coordinates
