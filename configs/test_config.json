@@ -5,7 +5,7 @@
     "batch_size": 1,
     "spatial_factor": 0.125,
     "temporal_subsample_factor": 0.2,
-    "pixel_tolerances": [5,10,15],
+    "pixel_tolerances": [3,5,10,15],
     "sensor_width": 640,
     "sensor_height": 480,
     "test_stride": 30,

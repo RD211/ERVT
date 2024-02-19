@@ -33,7 +33,7 @@
     "temporal_subsample_factor": 0.2,
     "val_interval": 2,
     "save_k_best": 2,
-    "pixel_tolerances": [5,10,15],
+    "pixel_tolerances": [3,5,10,15],
     "sensor_width": 640,
     "sensor_height": 480,
     "train_stride": 15,
