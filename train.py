@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 from model.BaselineEyeTrackingModel import CNN_GRU
 from model.RecurrentVisionTransformer import RVT
 from utils.training_utils import train_epoch, validate_epoch, top_k_checkpoints
-from utils.metrics import weighted_MSELoss
+from utils.metrics import weighted_MSELoss, weighted_RMSE
 from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
     TemporalSubsample, NormalizeLabel, SliceLongEventsToShort, \
     EventSlicesToVoxelGrid, SliceByTimeEventsTargets, RandomSpatialAugmentor
@@ -107,6 +107,9 @@ def main(args):
         elif args.loss == "weighted_mse":
             criterion = weighted_MSELoss(weights=torch.tensor((args.sensor_width/args.sensor_height, 1)).to(args.device), \
                                          reduction='mean')
+        elif args.loss == "weighted_rmse":
+            criterion = weighted_RMSE(weights=torch.tensor((args.sensor_width/args.sensor_height, 1)).to(args.device), \
+                                         reduction='mean')
         else:
             raise ValueError("Invalid loss name")
 
@@ -157,7 +160,7 @@ def main(args):
 
         # cache the dataset to disk to speed up training. The first epoch will be slow, but the following epochs will be fast.
         train_data = DiskCachedDataset(train_data, cache_path=f'./cached_dataset/train_tl_{args.train_length}_ts{args.train_stride}_ch{args.n_time_bins}', transforms=augmentation)
-        val_data = DiskCachedDataset(val_data, cache_path=f'./cached_dataset/val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}', transforms=augmentation)
+        val_data = DiskCachedDataset(val_data, cache_path=f'./cached_dataset/val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}')
 
         # Finally we wrap the dataset with pytorch dataloader
         train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, \
