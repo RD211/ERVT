@@ -171,15 +171,19 @@ class TorchMHSAWrapperCl(nn.Module):
         return attn_output
 
 class UnifiedBlockGridAttention(nn.Module):
-    def __init__(self, channels: int, partition_size: int, dim_head: int = 32, mode: str = 'block'):
+    def __init__(self, args, channels: int, partition_size: int, stage_idx: int, dim_head: int = 32, mode: str = 'block'):
         super().__init__()
         assert mode in ['block', 'grid'], "Mode must be either 'block' or 'grid'."
-        
+
+        self.args = args 
         self.channels = channels
         self.partition_size = partition_size
         self.mode = mode
+        self.stage_idx = stage_idx
         self.ln = nn.LayerNorm(channels)
         self.ls = LayerScale(channels)
+        stride_factor = reduce(lambda x, y: x * y, [args.stages[i]["stride"] for i in range(stage_idx)])
+        dim = int(args.stages[-1]["output_channels"] * ((args.sensor_width * args.spatial_factor) // stride_factor) * ((args.sensor_height * args.spatial_factor) // stride_factor))
         self.mhsa = TorchMHSAWrapperCl(dim=channels, dim_head=dim_head)
 
     def partition(self, x: torch.Tensor) -> torch.Tensor:
@@ -233,20 +237,82 @@ class UnifiedBlockGridAttention(nn.Module):
         attn_output = self.reverse_partition(attn_output, (H, W))  # Reverse partitioning
 
         return attn_output
+    
+class SelfAttentionCl(nn.Module):
+    """ Channels-last multi-head self-attention (B, ..., C) """
+    def __init__(
+            self,
+            dim: int,
+            dim_head: int = 32,
+            bias: bool = True):
+        super().__init__()
+        self.num_heads = dim // dim_head
+        self.dim_head = dim_head
+        self.scale = dim_head ** -0.5
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=bias)
+        self.proj = nn.Linear(dim, dim, bias=bias)
+
+
+    def forward(self, x: torch.Tensor):
+        B = x.shape[0]
+        restore_shape = x.shape[:-1]
+
+        q, k, v = self.qkv(x).view(B, -1, self.num_heads, self.dim_head * 3).transpose(1, 2).chunk(3, dim=3)
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+
+        x = (attn @ v).transpose(1, 2).reshape(restore_shape + (-1,))
+        x = self.proj(x)
+        return x
+    
+class FastAttentionCl(nn.Module):
+    """ Channels-last multi-head self-attention (B, ..., C) """
+    def __init__(
+            self,
+            dim: int,
+            spatial_size: tuple,
+            dim_head: int = 32,
+            bias: bool = True):
+        super().__init__()
+        self.num_heads = dim // dim_head
+        self.dim_head = dim_head
+        self.spatial_size = spatial_size
+        self.scale = dim_head ** -0.5
+
+        self.qkv = nn.Linear(dim, dim * 3, bias=bias)
+        self.proj = nn.Linear(dim, dim, bias=bias)
+
+
+    def forward(self, x: torch.Tensor):
+        B = x.shape[0]
+        restore_shape = x.shape[:-1]
+
+        q, k, v = self.qkv(x).view(B, -1, self.num_heads, self.dim_head * 3).transpose(1, 2).chunk(3, dim=3)
+        print(f"Shape q: {q.shape}, shape k: {k.shape}")
+        q = torch.nn.functional.normalize(q, dim=-1)
+        k = torch.nn.functional.normalize(k, dim=-1)
+
+        attn = (k.transpose(-2, -1) @ v) * self.scale
+        x = (q @ attn).transpose(1, 2).reshape(restore_shape + (-1,))
+        x = x / self.spatial_size
+        x = self.proj(x)
+        return x
 
 class RVTBlock(nn.Module):
     def __init__(self, args, **kwargs):
         super().__init__()
         args = Namespace(**args, **kwargs)
         self.conv = nn.Conv2d(args.input_channels, args.output_channels, kernel_size=args.kernel_size, stride=args.stride, padding=args.kernel_size//2)
-        self.block_sa = UnifiedBlockGridAttention(channels=args.output_channels, partition_size=args.partition_size, dim_head=args.dim_head, mode='block')
+        self.block_sa = UnifiedBlockGridAttention(args, channels=args.output_channels, partition_size=args.partition_size, stage_idx=args.stage_idx, dim_head=args.dim_head, mode='block')
         
         self.ln = nn.LayerNorm(args.output_channels)
 
         self.mlpb = MLP(dim=args.output_channels, channel_last=True, expansion_ratio=args.expansion_ratio, act_layer=args.mlp_act_layer, gated = args.mlp_gated, bias = args.mlp_bias, drop_prob=args.drop_prob)
         self.mlpg = MLP(dim=args.output_channels, channel_last=True, expansion_ratio=args.expansion_ratio, act_layer=args.mlp_act_layer, gated = args.mlp_gated, bias = args.mlp_bias, drop_prob=args.drop_prob)
 
-        self.grid_sa = UnifiedBlockGridAttention(channels=args.output_channels, partition_size=args.partition_size, dim_head=args.dim_head, mode='grid')
+        self.grid_sa = UnifiedBlockGridAttention(args, channels=args.output_channels, partition_size=args.partition_size, dim_head=args.dim_head, mode='grid')
 
         self.ls1 = LayerScale(args.output_channels)
         self.ls2 = LayerScale(args.output_channels)
@@ -349,6 +415,7 @@ class RVT(nn.Module):
             RVTBlock(
                 replace_act_layer({**(args.__dict__), **args.stages[i]}),
                 input_channels=args.stages[i-1]["output_channels"] if i > 0 else args.n_time_bins,
+                stage_idx=i
             )
             for i in range(len(args.stages))
         ])
