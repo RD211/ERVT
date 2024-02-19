@@ -266,27 +266,10 @@ class NormalizeLabel:
         labels[:, 1] = labels[:, 1] / self.pseudo_height
         return labels
 
-
-@dataclass
-class ZoomOutState:
-    active: bool
-    x0: int
-    y0: int
-    zoom_out_factor: float
-
-
-@dataclass
-class RotationState:
-    active: bool
-    angle_deg: float
-
-
 @dataclass
 class AugmentationState:
     apply_h_flip: bool
-    rotation: RotationState
-    apply_zoom_in: bool
-    zoom_out: ZoomOutState
+    apply_noise: bool
 
 def torch_uniform_sample_scalar(min_value: float, max_value: float):
     assert max_value >= min_value, f'{max_value=} is smaller than {min_value=}'
@@ -305,19 +288,22 @@ class RandomSpatialAugmentor:
                     d[key] = convert_to_namespace(value)
             return argparse.Namespace(**d)
 
-        augm_config = convert_to_namespace(augm_config['random'])
+        augm_config = convert_to_namespace(augm_config)
         self.dataset_wh = dataset_wh
 
         self.h_flip_prob = augm_config.prob_hflip
+        self.apply_noise_prob = augm_config.prob_noise
+        self.apply_noise_max_factor = augm_config.max_noise_factor
+        self.apply_noise_min_factor = augm_config.min_noise_factor
 
         self.augm_state = AugmentationState(
             apply_h_flip=False,
-            rotation=RotationState(active=False, angle_deg=0.0),
-            apply_zoom_in=False,
-            zoom_out=ZoomOutState(active=False, x0=0, y0=0, zoom_out_factor=1.0))
+            apply_noise=False,
+            )
 
     def randomize_augmentation(self):
         self.augm_state.apply_h_flip = self.h_flip_prob > th.rand(1).item()
+        self.augm_state.apply_noise = self.apply_noise_prob > th.rand(1).item()
 
     def h_flip(self, data):
         if len(data.shape) == 2:
@@ -326,10 +312,23 @@ class RandomSpatialAugmentor:
         elif len(data.shape) == 4:
             return np.flip(data, axis=-1).copy()
        
+    def add_random_noise(self, data):
+        data_means = np.mean(data, axis=(1, 2, 3))
+        data_stds = np.std(data, axis=(1, 2, 3))
+
+        noise_factors = np.random.uniform(self.apply_noise_min_factor, self.apply_noise_max_factor, size=data.shape[0])
+        noise = np.random.normal(loc=data_means[:, None, None, None], scale=data_stds[:, None, None, None] * noise_factors[:, None, None, None], size=data.shape).astype(data.dtype)
+
+        noisy_data = data + noise
+        return noisy_data
+
 
     def __call__(self, input, target):
         self.randomize_augmentation()
         if self.augm_state.apply_h_flip:
             return self.h_flip(input), self.h_flip(target)
+
+        if self.augm_state.apply_noise:
+            input = self.add_random_noise(input)
 
         return (input, target)

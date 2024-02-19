@@ -1,6 +1,6 @@
 {
-    "device": "cuda:0",
-    "mlflow_path": "./mlruns",
+    "device": "cuda:6",
+    "mlflow_path": "/users/mlica/eye/mlruns",
     "experiment_name": "trial_experiment",
     "data_dir": "./event_data",
     "run_name": "trial_run",
@@ -42,50 +42,12 @@
     "val_length": 30,
     "n_time_bins": 3,
     "voxel_grid_ch_normaization": false,
-    "loss": "weighted_mse",
+    "loss": "weighted_rmse",
     
     "data_augmentation": {
-        "random": {
-            "prob_hflip": 0.5,
-            "rotate": {
-                "prob": 0,
-                "min_angle_deg": 2,
-                "max_angle_deg": 6
-            },
-            "zoom": {
-                "prob": 0.8,
-                "zoom_in": {
-                    "weight": 8,
-                    "factor": {
-                        "min": 1,
-                        "max": 1.5
-                    }
-                },
-                "zoom_out": {
-                    "weight": 2,
-                    "factor": {
-                        "min": 1,
-                        "max": 1.2
-                    }
-                }
-            }
-        },
-        "stream": {
-            "prob_hflip": 0.5,
-            "rotate": {
-                "prob": 0,
-                "min_angle_deg": 2,
-                "max_angle_deg": 6
-            },
-            "zoom": {
-                "prob": 0.5,
-                "zoom_out": {
-                "factor": {
-                    "min": 1,
-                    "max": 1.2
-                }
-                }
-            }
-        }
+        "prob_hflip": 0.5,
+        "prob_noise": 0.3,
+        "max_noise_factor": 1.2,
+        "min_noise_factor": 0.05
     }
 }
