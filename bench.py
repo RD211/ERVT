@@ -19,6 +19,8 @@ from model.RecurrentVisionTransformer import RVT
 import torch
 from torch.profiler import profile, record_function, ProfilerActivity
 
+from utils.timer import CudaTimer
+
 
 def main(args):
     # Load hyperparameters from JSON configuration file
@@ -83,12 +85,6 @@ def main(args):
     # This is only used in combination of include_incomplete=True during testing
     test_loader = DataLoader(test_data, batch_size=args.batch_size, shuffle=False, \
                             num_workers=int(os.cpu_count()-2))
-
-    # load weights from a checkpoint
-    if args.checkpoint:
-        model.load_state_dict(torch.load(args.checkpoint))
-    else:
-        raise ValueError("Please provide a checkpoint file.")
     
     # evaluate on the validation set and save the predictions into a csv file.
     model.eval()
@@ -100,7 +96,8 @@ def main(args):
         for batch_idx, (data, target_placeholder) in enumerate(test_loader):
             data = data.to(args.device)
 
-            output = model(data)
+            with CudaTimer(device=args.device, timer_name="model_inference"):
+                output = model(data)
 
             # Important! 
             # cast the output back to the downsampled sensor space (80x60)
@@ -113,6 +110,7 @@ def main(args):
                     row_to_write.insert(0, row_id)
                     csv_writer.writerow(row_to_write)
                     row_id += 1
+
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
