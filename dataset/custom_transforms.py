@@ -266,28 +266,10 @@ class NormalizeLabel:
         labels[:, 1] = labels[:, 1] / self.pseudo_height
         return labels
 
-
-@dataclass
-class ZoomOutState:
-    active: bool
-    x0: int
-    y0: int
-    zoom_out_factor: float
-
-
-@dataclass
-class RotationState:
-    active: bool
-    angle_deg: float
-
-
 @dataclass
 class AugmentationState:
     apply_h_flip: bool
     apply_noise: bool
-    # rotation: RotationState
-    # apply_zoom_in: bool
-    # zoom_out: ZoomOutState
 
 def torch_uniform_sample_scalar(min_value: float, max_value: float):
     assert max_value >= min_value, f'{max_value=} is smaller than {min_value=}'
@@ -317,9 +299,6 @@ class RandomSpatialAugmentor:
         self.augm_state = AugmentationState(
             apply_h_flip=False,
             apply_noise=False,
-            # rotation=RotationState(active=False, angle_deg=0.0),
-            # apply_zoom_in=False,
-            # zoom_out=ZoomOutState(active=False, x0=0, y0=0, zoom_out_factor=1.0)
             )
 
     def randomize_augmentation(self):
