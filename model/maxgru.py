@@ -8,9 +8,6 @@ import math
 from typing import Type
 
 
-
-
-
 class MaxGRU(nn.Module):
     """
     Adaptation of the MaxViT paper and RVT paper together with fast attention module, optimized for performance.
@@ -33,7 +30,7 @@ class MaxGRUBlock(nn.Module):
     def __init__(self, args, **kwargs):
         super().__init__()
         args = Namespace(**args, **kwargs)
-        
+
         self.conv = nn.Conv2d(args.input_channels, args.output_channels, kernel_size=args.kernel_size, stride=args.stride, padding=args.kernel_size//2)
         self.attn = FastAttention(args.output_channels, mid_chn=args.mid_chn, out_chan=args.out_chan, norm_layer=args.norm_layer)
         self.mlp = MLP(args.output_channels, channel_last=False, expansion_ratio=args.expansion_ratio, act_layer=args.act_layer, gated=args.gated, bias=args.bias, drop_prob=args.drop_prob)
@@ -79,10 +76,12 @@ class ConvBNReLU(nn.Module):
                 if not ly.bias is None: nn.init.constant_(ly.bias, 0)
 
 class FastAttention(nn.Module):
+    """
+    """
     def __init__(self, in_chan, mid_chn=256, out_chan=128, norm_layer=None, *args, **kwargs):
         super(FastAttention, self).__init__()
         self.norm_layer = norm_layer
-        mid_chn = int(in_chan/2)        
+        mid_chn = int(in_chan/2)
         self.w_qs = ConvBNReLU(in_chan, 32, ks=1, stride=1, padding=0, norm_layer=norm_layer, activation='none')
 
         self.w_ks = ConvBNReLU(in_chan, 32, ks=1, stride=1, padding=0, norm_layer=norm_layer, activation='none')
@@ -161,7 +160,7 @@ class MLP(nn.Module):
 
     def forward(self, x):
         return self.net(x)
-    
+
 class GLU(nn.Module):
     def __init__(self,
                  dim_in: int,
@@ -189,3 +188,33 @@ class GLU(nn.Module):
     def forward(self, x: torch.Tensor):
         x, gate = torch.tensor_split(self.proj(x), 2, dim=self.channel_dim)
         return x * self.act_layer(gate)
+
+
+class MGRU(nn.Module):
+    """
+    Modified GRU architecture that works on feature maps.
+    Inspired by the LSTM used in Recurrent Vision Transformer.
+    """
+    def __init__(self, args, **kwargs):
+        super().__init__()
+        args = Namespace(**args, **kwargs)
+
+        self.dim = args.gates_dimension
+        self.conv1x1 = nn.Conv2d(in_channels = args.in_channels * 2, out_channels = 2 * args.gates_dimension, kernel_size=1)
+        self.conv_c = nn.Conv2d(in_channels = args.in_channels * 2, out_channels = args.gates_dimension, kernel_size=1)
+
+
+    def forward(self, x, h):
+        # input size: N x C x H x W
+        # hidden size: N x C x H x W
+        xh = torch.cat([h, x], dim=1)
+        r_u = self.conv1x1(xh)
+        r, u = torch.split(r_u, self.dim, dim=1)
+        r = F.sigmoid(r)
+        u = F.sigmoid(u)
+
+        xh = torch.cat([x, r * h], dim=1)
+        c = self.conv_c(xh)
+        c = F.relu(c)
+
+        return u * h + (1 - u) * c

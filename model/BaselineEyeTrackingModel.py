@@ -1,4 +1,5 @@
 import torch
+
 import torch.nn as nn
 
 class CNN_GRU(nn.Module):
@@ -6,7 +7,7 @@ class CNN_GRU(nn.Module):
         A baseline eye tracking which uses CNN + GRU to predict the pupil center coordinate
     """
     def __init__(self, args):
-        super().__init__() 
+        super().__init__()
         self.args = args
         self.conv1 = nn.Conv2d(args.n_time_bins, 32, kernel_size=3, stride=1, padding=1)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)

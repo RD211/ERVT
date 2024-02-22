@@ -3,3 +3,5 @@ cached_dataset/
 mlruns
 trace.json
 submission.csv
+.DS_Store
+.swp
