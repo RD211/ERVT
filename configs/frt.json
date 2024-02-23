@@ -4,7 +4,7 @@
     "experiment_name": "trial_experiment",
     "data_dir": "./event_data",
     "run_name": "trial_run",
-    "architecture": "RVT",
+    "architecture": "FRT",
     "expansion_ratio": 2,
     "mlp_act_layer": "gelu",
     "mlp_gated": true,
@@ -14,16 +14,12 @@
         {
             "kernel_size": 7,
             "output_channels": 32,
-            "stride": 2,
-            "partition_size": 2,
-            "dim_head": 32
+            "stride": 2
         },
         {
             "kernel_size": 3,
             "output_channels": 64,
-            "stride": 2,
-            "partition_size": 5,
-            "dim_head": 32
+            "stride": 2
         }
     ],
     "lr": 0.001,
@@ -48,8 +44,6 @@
         "prob_hflip": 0.5,
         "prob_noise": 0.3,
         "max_noise_factor": 1.2,
-        "min_noise_factor": 0.05,
-        "time_reversal": 0.5,
-        "random_time_shift": 0.5
+        "min_noise_factor": 0.05
     }
 }
