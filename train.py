@@ -99,7 +99,7 @@ def main(args):
         print("Model has:", non_trainable_params, "non-trainable parameters")
 
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, args.gamma, args.epochs - 1, verbose = True)
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, args.gamma, -1, verbose = True)
 
         if args.loss == "mse":
             criterion = nn.MSELoss()

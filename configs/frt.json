@@ -8,6 +8,7 @@
     "expansion_ratio": 2,
     "mlp_act_layer": "gelu",
     "mlp_gated": true,
+    "gamma": 0.99,
     "mlp_bias": true,
     "drop_prob": 0.0,
     "stages": [
@@ -44,6 +45,8 @@
         "prob_hflip": 0.5,
         "prob_noise": 0.3,
         "max_noise_factor": 1.2,
-        "min_noise_factor": 0.05
+        "min_noise_factor": 0.05,
+        "time_reversal": 0,
+        "random_time_shift": 0
     }
 }
