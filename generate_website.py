@@ -16,9 +16,10 @@ import numpy as np
 from matplotlib.animation import FuncAnimation
 from IPython.display import HTML
 import tqdm
+import matplotlib
 
 def main(args):
-
+    matplotlib.use('Agg')
     # Load hyperparameters from JSON configuration file
     if args.config_file:
         with open(os.path.join('./configs', args.config_file), 'r') as f:
@@ -117,7 +118,6 @@ def main(args):
         ax.set_title(title)
         ax.set_xticks([])
         ax.set_yticks([])
-        im = ax.imshow(voxel_grid[0, :, :, :])
 
         def update(i):
             ax.clear()  # Clear to avoid overlaying dots
@@ -131,7 +131,6 @@ def main(args):
                 x, y = targets[i]
                 ax.plot(x*voxel_grid.shape[2], y*voxel_grid.shape[1], 'go')
             return ax,
-
         ani = FuncAnimation(fig, update, frames=range(voxel_grid.shape[0]), blit=False)
         html_str = ani.to_jshtml()
         plt.close(fig)
