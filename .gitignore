@@ -4,3 +4,5 @@ mlruns
 trace.json
 submission.csv
 sample_submission.csv
+.DS_Store
+.swp
