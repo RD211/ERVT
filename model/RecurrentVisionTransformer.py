@@ -258,7 +258,7 @@ class RVTBlock(nn.Module):
 
         self.lstm = DWSConvLSTM2d(dim=args.output_channels)
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x: torch.Tensor, h: Optional[torch.Tensor], c: Optional[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         x_conv = self.conv(x)
         x_conv = x_conv.permute(0, 2, 3, 1)
         x_conv = self.ln(x_conv)
@@ -268,16 +268,16 @@ class RVTBlock(nn.Module):
         x_bsa = self.ln(x_bsa)
         x_bsa = self.mlpb(x_bsa)
 
+
         x_gsa = self.grid_sa(x_bsa)
         x_gsa = x_gsa + x_bsa
         x_gsa = self.ln(x_gsa)
         x_gsa = self.mlpg(x_gsa)
 
-        return x_gsa.permute(0, 3, 1, 2)
-    
-    def forward_with_lstm(self, x: torch.Tensor, h: Optional[torch.Tensor], c: Optional[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
-        x, c = self.lstm(x, (c, h))
-        return x, c
+        x_unflattened = x_gsa.permute(0, 3, 1, 2)
+        x_unflattened, c = self.lstm(x_unflattened, (c, h))
+
+        return x_unflattened, c
 
 class LinearHead(nn.Module):
     """
@@ -325,45 +325,32 @@ class RVT(nn.Module):
     def forward(self, x):
         B, N, C, H, W = x.size()
 
-        # Initial LSTM states
-        lstm_states = (None, None)
 
-        # Outputs that are to be fed in the detection head
-        accumulated_outputs = []
+        lstm_states = [None] * len(self.stages)
+        outputs = []
 
-        # We process the tensor column wise, i.e. finishing each stage before moving to the next one for each time step in parallel
-        with CudaTimer(device=x.device, timer_name="RVT Time step loop"):
+        # We iterate over the time dimension
+        for t in range(N):
 
+            # We get the input for the current time step
+            xt = x[:, t, :, :, :] 
+
+            # For each stage we apply the RVTBlock
             for i, stage in enumerate(self.stages):
+                lstm_state = lstm_states[i] if lstm_states[i] is not None else (None, None)
+                xt, c = stage(xt, lstm_state[0], lstm_state[1])
 
-                # If we are at the first stage we use the input tensor, otherwise we use the output from the previous stage
-                # We reshape it into B*N, C, H, W to process all time steps in parallel
-                xts = x.view(B*N, C, H, W) if i == 0 else xts.view(B*N, xts.size(2), xts.size(3), xts.size(4))
+                # We save it for the next time step
+                lstm_states[i] = (c, xt)
 
-                # Process the stage
-                xts = stage(xts)
 
-                # We get the new output shape and reshape it back to B, N, C, H, W
-                _, C, H, W = xts.size()
-                xts = xts.view(B, N, C, H, W)
+            # Flatten the tensor
+            xt = torch.flatten(xt, 1)
 
-                # We now process the time steps sequentially but only the lstm part.
-                for t in range(N):
-                    xt = xts[:, t, :, :, :]
-                    xt, c = stage.forward_with_lstm(xt, lstm_states[0], lstm_states[1])
-                    lstm_states = (c, xt)
-                    
-                    # If we are at the last stage we flatten the tensor and append it to the accumulated outputs
-                    if i == len(self.stages) - 1:
-                        accumulated_outputs.append(torch.flatten(xt, 1))
-                
-                # We reset them back.
-                lstm_states = (None, None)
-                    
-        with CudaTimer(device=x.device, timer_name="RVT Detection head"):
-            # Stack accumulated outputs along the time dimension and then apply the linear head in parallel
-            stacked_outputs = torch.stack(accumulated_outputs, dim=1)
-            final_output = self.detection(stacked_outputs.view(B*N, -1))
-            coordinates = final_output.view(B, N, -1)
+            # We take the last stage output and feed it to the output layer
+            final_output = self.detection(xt)
+            outputs.append(final_output)
+
+        coordinates = torch.stack(outputs, dim=1) 
 
         return coordinates
