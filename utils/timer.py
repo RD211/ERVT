@@ -26,13 +26,15 @@ class CudaTimer:
         self.end = None
 
     def __enter__(self):
-        torch.cuda.synchronize(device=self.device)
+        if self.device.type == 'cuda':
+            torch.cuda.synchronize(device=self.device)
         self.start = time.time()
         return self
 
     def __exit__(self, *args):
         assert self.start is not None
-        torch.cuda.synchronize(device=self.device)
+        if self.device.type == 'cuda':
+            torch.cuda.synchronize(device=self.device)
         end = time.time()
         cuda_timers[self.timer_name].append(end - self.start)
 
@@ -88,11 +90,15 @@ def print_timing_info():
         timing_value_s_median = np.median(np.array(values))
         timing_value_ms_mean = timing_value_s_mean * 1000
         timing_value_ms_median = timing_value_s_median * 1000
+        timing_value_s_std = np.std(np.array(values))
+        timing_value_ms_std = timing_value_s_std * 1000
         if timing_value_ms_mean > 1000:
-            print('{}: mean={:.2f} s, median={:.2f} s'.format(timer_name, timing_value_s_mean, timing_value_s_median))
+            print('{}: mean={:.2f} s, median={:.2f} s, std={:.2f} s'.format(timer_name, timing_value_s_mean,
+                                                                            timing_value_s_median, timing_value_s_std))
         else:
             print(
-                '{}: mean={:.2f} ms, median={:.2f} ms'.format(timer_name, timing_value_ms_mean, timing_value_ms_median))
+                '{}: mean={:.2f} ms, median={:.2f} ms, std={:.2f} ms'.format(timer_name, timing_value_ms_mean,
+                                                                            timing_value_ms_median, timing_value_ms_std))
 
 
 # this will print all the timer values upon termination of any program that imported this file

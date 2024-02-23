@@ -5,6 +5,7 @@ import math
 from typing import Optional, Union, Tuple, List, Type
 from argparse import Namespace
 from utils.timer import CudaTimer
+import torch.nn.functional as F
 
 class DWSConvLSTM2d(nn.Module):
     """LSTM with (depthwise-separable) Conv option in NCHW [channel-first] format.
@@ -145,139 +146,110 @@ class LayerScale(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Applying the scaling operation. If 'inplace' is True, 'mul_' is used to modify the input tensor directly.
         return x.mul_(self.gamma) if self.inplace else x * self.gamma
-    
-class SelfAttentionCl(nn.Module):
-    """ Channels-last multi-head self-attention (B, ..., C) """
-    def __init__(
-            self,
-            dim: int,
-            dim_head: int = 32,
-            bias: bool = True):
-        super().__init__()
-        self.num_heads = dim // dim_head
-        self.dim_head = dim_head
-        self.scale = dim_head ** -0.5
 
-        self.qkv = nn.Linear(dim, dim * 3, bias=bias)
-        self.proj = nn.Linear(dim, dim, bias=bias)
-
-
-    def forward(self, x: torch.Tensor):
-        B = x.shape[0]
-        restore_shape = x.shape[:-1]
-
-        q, k, v = self.qkv(x).view(B, -1, self.num_heads, self.dim_head * 3).transpose(1, 2).chunk(3, dim=3)
-
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        attn = attn.softmax(dim=-1)
-
-        x = (attn @ v).transpose(1, 2).reshape(restore_shape + (-1,))
-        x = self.proj(x)
-        return x
-
-class UnifiedBlockGridAttention(nn.Module):
-    def __init__(self, channels: int, partition_size: int, dim_head: int = 32, mode: str = 'block'):
-        super().__init__()
-        assert mode in ['block', 'grid'], "Mode must be either 'block' or 'grid'."
-        
-        self.channels = channels
-        self.partition_size = partition_size
-        self.mode = mode
-        self.ln = nn.LayerNorm(channels)
-        self.ls = LayerScale(channels)
-        self.mhsa = SelfAttentionCl(dim=channels, dim_head=dim_head)
-
-    def partition(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Partitions the input tensor based on the selected mode (block or grid).
-        """
-        B, H, W, C = x.shape
-        if self.mode == 'block':
-            if H % self.partition_size != 0 or W % self.partition_size != 0:
-                raise ValueError(f"Input size must be divisible by the window size. Got: {H}x{W}, window size: {self.partition_size}")
-            shape = (B, H // self.partition_size, self.partition_size, W // self.partition_size, self.partition_size, C)
-            permute_order = (0, 1, 3, 2, 4, 5)
-        else:  # grid mode
-            if H % self.partition_size != 0 or W % self.partition_size != 0:
-                raise ValueError(f"Input size must be divisible by the grid size. Got: {H}x{W}, grid size: {self.partition_size}")
-            shape = (B, self.partition_size, H // self.partition_size, self.partition_size, W // self.partition_size, C)
-            permute_order = (0, 2, 4, 1, 3, 5)
-        
-        x = x.view(shape)
-        windows = x.permute(permute_order).contiguous().view(-1, self.partition_size, self.partition_size, C)
-        return windows
-
-    def reverse_partition(self, windows: torch.Tensor, img_size: Tuple[int, int]) -> torch.Tensor:
-        """
-        Reverses the partitioning operation to reconstruct the original image shape.
-        """
-        H, W = img_size
-        C = windows.shape[-1]
-        if self.mode == 'block':
-            shape = (-1, H // self.partition_size, W // self.partition_size, self.partition_size, self.partition_size, C)
-            permute_order = (0, 1, 3, 2, 4, 5)
-        else:  # grid mode
-            shape = (-1, H // self.partition_size, W // self.partition_size, self.partition_size, self.partition_size, C)
-            permute_order = (0, 3, 1, 4, 2, 5)
-        
-        x = windows.view(shape)
-        x = x.permute(permute_order).contiguous().view(-1, H, W, C)
-        return x
-    
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Applies self-attention based on the selected partitioning mode (block or grid).
-        """
-        B, H, W, C = x.size()
-
-        x = self.ln(x)  # Apply layer normalization
-        x = self.partition(x)  # Partition based on mode
-
-        attn_output = self.mhsa(x)  # Apply self-attention
-        attn_output = self.ls(attn_output)  # Scale the attention output
-        attn_output = self.reverse_partition(attn_output, (H, W))  # Reverse partitioning
-
-        return attn_output
-
-class RVTBlock(nn.Module):
+class FRTBlock(nn.Module):
     def __init__(self, args, **kwargs):
         super().__init__()
         args = Namespace(**args, **kwargs)
         self.conv = nn.Conv2d(args.input_channels, args.output_channels, kernel_size=args.kernel_size, stride=args.stride, padding=args.kernel_size//2)
-        self.block_sa = UnifiedBlockGridAttention(channels=args.output_channels, partition_size=args.partition_size, dim_head=args.dim_head, mode='block')
-        
+        self.fast_att = FastAttention(in_chan=args.output_channels, mid_chn=args.output_channels, out_chan=args.output_channels)
         self.ln = nn.LayerNorm(args.output_channels)
-
-        self.mlpb = MLP(dim=args.output_channels, channel_last=True, expansion_ratio=args.expansion_ratio, act_layer=args.mlp_act_layer, gated = args.mlp_gated, bias = args.mlp_bias, drop_prob=args.drop_prob)
-        self.mlpg = MLP(dim=args.output_channels, channel_last=True, expansion_ratio=args.expansion_ratio, act_layer=args.mlp_act_layer, gated = args.mlp_gated, bias = args.mlp_bias, drop_prob=args.drop_prob)
-
-        self.grid_sa = UnifiedBlockGridAttention(channels=args.output_channels, partition_size=args.partition_size, dim_head=args.dim_head, mode='grid')
-
-        self.ls1 = LayerScale(args.output_channels)
-        self.ls2 = LayerScale(args.output_channels)
-
+        self.mlp = MLP(dim=args.output_channels, channel_last=True, expansion_ratio=args.expansion_ratio, act_layer=args.mlp_act_layer, gated = args.mlp_gated, bias = args.mlp_bias, drop_prob=args.drop_prob)
         self.lstm = DWSConvLSTM2d(dim=args.output_channels)
 
     def forward(self, x: torch.Tensor, h: Optional[torch.Tensor], c: Optional[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         x_conv = self.conv(x)
         x_conv = x_conv.permute(0, 2, 3, 1)
-        x_conv = self.ln(x_conv)
+        x_conv = self.ln(x_conv).permute(0, 3, 1, 2)
 
-        x_bsa = self.block_sa(x_conv)
+        x_bsa = self.fast_att(x_conv)
         x_bsa = x_bsa + x_conv
-        x_bsa = self.ln(x_bsa)
-        x_bsa = self.mlpb(x_bsa)
+        x_bsa = self.ln(x_bsa.permute(0, 2, 3, 1))
+        x_bsa = self.mlp(x_bsa)
 
-
-        x_gsa = self.grid_sa(x_bsa)
-        x_gsa = x_gsa + x_bsa
-        x_gsa = self.ln(x_gsa)
-        x_gsa = self.mlpg(x_gsa)
-
-        x_unflattened = x_gsa.permute(0, 3, 1, 2)
+        x_unflattened = x_bsa.permute(0, 3, 1, 2)
         x_unflattened, c = self.lstm(x_unflattened, (c, h))
 
         return x_unflattened, c
+
+class ConvBNReLU(nn.Module):
+    def __init__(self, in_chan, out_chan, ks=3, stride=1, padding=1, norm_layer=None, activation='leaky_relu', *args, **kwargs):
+        super(ConvBNReLU, self).__init__()
+        self.conv = nn.Conv2d(in_chan,
+                out_chan,
+                kernel_size = ks,
+                stride = stride,
+                padding = padding,
+                bias = False)
+        self.norm_layer = norm_layer
+        if self.norm_layer is not None:
+            self.bn = norm_layer(out_chan)
+        else:
+            self.bn =  lambda x:x
+
+        self.init_weight()
+
+    def forward(self, x):
+        x = self.conv(x)
+        x = self.bn(x)
+        x = F.relu(x)
+        return x
+
+    def init_weight(self):
+        for ly in self.children():
+            if isinstance(ly, nn.Conv2d):
+                nn.init.kaiming_normal_(ly.weight, a=1)
+                if not ly.bias is None: nn.init.constant_(ly.bias, 0)
+
+class FastAttention(nn.Module):
+    """
+    """
+    def __init__(self, in_chan, mid_chn=256, out_chan=128, norm_layer=nn.BatchNorm2d, *args, **kwargs):
+        super(FastAttention, self).__init__()
+        self.norm_layer = norm_layer
+        self.dim = in_chan
+        # mid_chn = int(in_chan/2)
+        self.w_qs = ConvBNReLU(in_chan, in_chan, ks=1, stride=1, padding=0, norm_layer=norm_layer, activation='none')
+
+        self.w_ks = ConvBNReLU(in_chan, in_chan, ks=1, stride=1, padding=0, norm_layer=norm_layer, activation='none')
+
+        self.w_vs = ConvBNReLU(in_chan, in_chan, ks=1, stride=1, padding=0, norm_layer=norm_layer)
+
+        self.latlayer3 = ConvBNReLU(in_chan, in_chan, ks=1, stride=1, padding=0, norm_layer=norm_layer)
+
+        #self.init_weight()
+
+    def forward(self, feat):
+        # Expect shape N x C x H x W
+        query = self.w_qs(feat)
+        key   = self.w_ks(feat)
+        value = self.w_vs(feat)
+
+        N,C,H,W = feat.size()
+
+        query_ = query.view(N,self.dim,-1).permute(0, 2, 1)
+        query = F.normalize(query_, p=2, dim=2, eps=1e-12)
+
+        key_   = key.view(N,self.dim,-1)
+        key   = F.normalize(key_, p=2, dim=1, eps=1e-12)
+
+        value = value.view(N,C,-1).permute(0, 2, 1)
+
+        f = torch.matmul(key, value)
+        y = torch.matmul(query, f)
+        y = y.permute(0, 2, 1).contiguous()
+
+        y = y.view(N, C, H, W)
+        W_y = self.latlayer3(y)
+        p_feat = W_y + feat
+
+        return p_feat
+
+    def init_weight(self):
+        for ly in self.children():
+            if isinstance(ly, nn.Conv2d):
+                nn.init.kaiming_normal_(ly.weight, a=1)
+                if not ly.bias is None: nn.init.constant_(ly.bias, 0)
 
 class LinearHead(nn.Module):
     """
@@ -296,7 +268,7 @@ class LinearHead(nn.Module):
     def forward(self, x):
         return self.linear(x)
 
-class RVT(nn.Module):
+class FRT(nn.Module):
     def __init__(self, args, **kwargs):
         super().__init__()
 
@@ -313,7 +285,7 @@ class RVT(nn.Module):
             return args
 
         self.stages = nn.ModuleList([
-            RVTBlock(
+            FRTBlock(
                 replace_act_layer({**(args.__dict__), **args.stages[i]}),
                 input_channels=args.stages[i-1]["output_channels"] if i > 0 else args.n_time_bins,
             )

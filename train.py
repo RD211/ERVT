@@ -16,6 +16,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from model.BaselineEyeTrackingModel import CNN_GRU
 from model.RecurrentVisionTransformer import RVT
+from model.FastRecurrentTransformer import FRT
 from utils.training_utils import train_epoch, validate_epoch, top_k_checkpoints
 from utils.metrics import weighted_MSELoss, weighted_RMSE
 from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
@@ -23,7 +24,6 @@ from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
     EventSlicesToVoxelGrid, SliceByTimeEventsTargets, RandomSpatialAugmentor
 import tonic.transforms as transforms
 from tonic import SlicedDataset, DiskCachedDataset
-
 
 def train(model, train_loader, val_loader, criterion, optimizer, args):
     best_val_loss = float("inf")
@@ -54,14 +54,6 @@ def train(model, train_loader, val_loader, criterion, optimizer, args):
         print(f"Epoch {epoch+1}/{args.num_epochs}: Train Loss: {train_loss:.4f}")
 
     return model
-
-# class CustomDiskCachedDataset(DiskCachedDataset):
-#     def __init__(self, *args, **kwargs):
-#         super().__init__(*args, **kwargs)
-
-#     def __getitem__(self, index):
-#         input, target = super().__getitem__(index)
-#         return input, self.transform(target)
     
 def main(args):
     # Load hyperparameters from JSON configuration file
@@ -90,6 +82,11 @@ def main(args):
         # also dump the args to a JSON file in MLflow artifact
         with open(os.path.join(mlflow.get_artifact_uri(), "args.json"), 'w') as f:
             json.dump(vars(args), f)
+
+        # Dump all the files in model/ to MLflow artifact
+        for file in os.listdir("./model"):
+            if file.endswith(".py"):
+                mlflow.log_artifact(os.path.join("./model", file))
 
         # Define your model, optimizer, and criterion
         model = eval(args.architecture)(args).to(args.device)
