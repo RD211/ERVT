@@ -1,6 +1,6 @@
 {
   "device": "cuda:6",
-  "mlflow_path": "/users/mlica/eye/mlruns",
+  "mlflow_path": "./../eye/mlruns",
   "experiment_name": "trial_experiment",
   "data_dir": "./event_data",
   "run_name": "trial_run",
