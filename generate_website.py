@@ -17,22 +17,6 @@ from matplotlib.animation import FuncAnimation
 from IPython.display import HTML
 import tqdm
 
-# Parse arguments force insert the config
-args = {
-    "config_file": "./configs/rvt_2_layered_test.json",
-    "checkpoint": "/users/mlica/eye/mlruns/431713750259427479/02262492d29142a0b6cb9dd0287eefd8/artifacts/model_best_ep133_val_loss_0.0090.pth",
-    "train_length": 30,
-    "val_length": 30,
-    "train_stride": 15,
-    "val_stride": 30,
-    "data_augmentation": {
-        "prob_hflip": 0.5,
-        "prob_noise": 0.3,
-        "max_noise_factor": 1.2,
-        "min_noise_factor": 0.05,
-    }
-}
-
 def main(args):
 
     # Load hyperparameters from JSON configuration file
