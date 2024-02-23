@@ -15,7 +15,12 @@ def train_epoch(model, train_loader, criterion, optimizer, args):
         outputs = model(inputs.to(args.device))
         #taking only the last frame's label, and first two dim are coordinate, last is open or close so discarded
         targets = targets.to(args.device)
-        loss = criterion(outputs, targets[:,:, :2]) 
+        if args.head == 'linear':
+            loss = criterion(outputs, targets[:,:, :2])
+        elif args.head == 'linear_label':
+            loss = criterion(outputs, targets)
+        else:
+            raise Exception("Head not implemented.")
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
@@ -34,10 +39,10 @@ def train_epoch(model, train_loader, criterion, optimizer, args):
                                 height_scale=args.sensor_height*args.spatial_factor)
         total_p_error_all = {f'error_all': (total_p_error_all[f'error_all'] + p_error_total).item()}
         total_sample_p_error_all += bs_times_seqlen
-    
+
     metrics = {'tr_p_acc_all': {f'tr_p{k}_acc_all': (total_p_corr_all[f'p{k}_all']/total_samples_all) for k in args.pixel_tolerances},
                'tr_p_error_all': {f'tr_p_error_all': (total_p_error_all[f'error_all']/total_sample_p_error_all)}}
-    
+
     return model, total_loss / len(train_loader), metrics
 
 
@@ -51,7 +56,7 @@ def validate_epoch(model, val_loader, criterion, args):
         for inputs, targets in val_loader:
             outputs = model(inputs.to(args.device))
             targets = targets.to(args.device)
-            loss = criterion(outputs, targets[:,:, :2]) 
+            loss = criterion(outputs, targets[:,:, :2])
             total_loss += loss.item()
 
             # calculate pixel tolerated accuracy
@@ -71,7 +76,7 @@ def validate_epoch(model, val_loader, criterion, args):
 
     metrics = {'val_p_acc_all': {f'val_p{k}_acc_all': (total_p_corr_all[f'p{k}_all']/total_samples_all) for k in args.pixel_tolerances},
                 'val_p_error_all': {f'val_p_error_all': (total_p_error_all[f'error_all']/total_sample_p_error_all)}}
-    
+
     return total_loss / len(val_loader), metrics
 
 
@@ -89,5 +94,3 @@ def top_k_checkpoints(args, artifact_uri):
                                     key=lambda x: float(x.split("_")[-1][:-4]))
         # delete the model checkpoint with the largest validation loss
         os.remove(os.path.join(artifact_uri, model_checkpoints[-1]))
-
-

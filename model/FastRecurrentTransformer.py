@@ -134,7 +134,7 @@ class MLP(nn.Module):
 
     def forward(self, x):
         return self.net(x)
-    
+
 class LayerScale(nn.Module):
     def __init__(self, dim: int, init_values: float = 1e-5, inplace: bool = False):
         super().__init__()
@@ -268,6 +268,30 @@ class LinearHead(nn.Module):
     def forward(self, x):
         return self.linear(x)
 
+class EyeHead(nn.Module):
+    """
+    MLP head that integrates the eye closed/open information.
+    """
+
+    def __init__(self, args, **kwargs):
+        super().__init__()
+        args = Namespace(**vars(args), **kwargs)
+        self.args = args
+
+        stride_factor = reduce(lambda x, y: x * y, [s["stride"] for s in args.stages])
+        dim = int(args.stages[-1]["output_channels"] * ((args.sensor_width * args.spatial_factor) // stride_factor) * ((args.sensor_height * args.spatial_factor) // stride_factor))
+
+        self.linear = nn.Linear(dim, 3)
+
+    def forward(self, x):
+        out = self.linear(x)
+        # apply sigmoid to put the value between 0 and 1 for BCE
+        out[0] = torch.sigmoid(out[0])
+        return out
+
+
+
+
 class FRT(nn.Module):
     def __init__(self, args, **kwargs):
         super().__init__()
@@ -292,7 +316,12 @@ class FRT(nn.Module):
             for i in range(len(args.stages))
         ])
 
-        self.detection = LinearHead(args)
+        if args.head == 'linear':
+            self.detection = LinearHead(args)
+        elif args.head == 'linear_label':
+            self.detection = EyeHead(args)
+        else:
+            raise Exception("Head not implemented.")
 
     def forward(self, x):
         B, N, C, H, W = x.size()
@@ -305,7 +334,7 @@ class FRT(nn.Module):
         for t in range(N):
 
             # We get the input for the current time step
-            xt = x[:, t, :, :, :] 
+            xt = x[:, t, :, :, :]
 
             # For each stage we apply the RVTBlock
             for i, stage in enumerate(self.stages):
@@ -323,6 +352,6 @@ class FRT(nn.Module):
             final_output = self.detection(xt)
             outputs.append(final_output)
 
-        coordinates = torch.stack(outputs, dim=1) 
+        coordinates = torch.stack(outputs, dim=1)
 
         return coordinates

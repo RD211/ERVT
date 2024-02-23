@@ -19,6 +19,7 @@ from model.RecurrentVisionTransformer import RVT
 from model.FastRecurrentTransformer import FRT
 from utils.training_utils import train_epoch, validate_epoch, top_k_checkpoints
 from utils.metrics import weighted_MSELoss, weighted_RMSE
+from utils.loss import BCE_MSE
 from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
     TemporalSubsample, NormalizeLabel, SliceLongEventsToShort, \
     EventSlicesToVoxelGrid, SliceByTimeEventsTargets, RandomSpatialAugmentor
@@ -42,10 +43,10 @@ def train(model, train_loader, val_loader, criterion, optimizer, args):
                 # save the new best model to MLflow artifact with 3 decimal places of validation loss in the file name
                 torch.save(model.state_dict(), os.path.join(mlflow.get_artifact_uri(), \
                             f"model_best_ep{epoch}_val_loss_{val_loss:.4f}.pth"))
-                
+
                 # DANGER Zone, this will delete files (checkpoints) in MLflow artifact
                 top_k_checkpoints(args, mlflow.get_artifact_uri())
-                
+
             print(f"[Validation] at Epoch {epoch+1}/{args.num_epochs}: Val Loss: {val_loss:.4f}")
             mlflow.log_metric("val_loss", val_loss, step=epoch)
             mlflow.log_metrics(val_metrics['val_p_acc_all'], step=epoch)
@@ -54,7 +55,7 @@ def train(model, train_loader, val_loader, criterion, optimizer, args):
         print(f"Epoch {epoch+1}/{args.num_epochs}: Train Loss: {train_loss:.4f}")
 
     return model
-    
+
 def main(args):
     # Load hyperparameters from JSON configuration file
     if args.config_file:
@@ -105,8 +106,13 @@ def main(args):
             criterion = weighted_MSELoss(weights=torch.tensor((args.sensor_width/args.sensor_height, 1)).to(args.device), \
                                          reduction='mean')
         elif args.loss == "weighted_rmse":
-            criterion = weighted_RMSE(weights=torch.tensor((args.sensor_width/args.sensor_height, 1)).to(args.device), \
+            if args.head == 'linear':
+                criterion = weighted_RMSE(weights=torch.tensor((args.sensor_width/args.sensor_height, 1)).to(args.device), \
                                          reduction='mean')
+            elif args.head == "linear_label":
+                criterion = BCE_MSE(torch.tensor((args.sensor_width/args.sensor_height, 1)).to(args.device), args.alpha, args.beta)
+            else:
+                raise Exception("Head not implemented.")
         else:
             raise ValueError("Invalid loss name")
 
@@ -122,14 +128,14 @@ def main(args):
 
         # Then we define the raw event recording and label dataset, the raw events spatial coordinates are also downsampled
         train_data_orig = ThreeETplus_Eyetracking(save_to=args.data_dir, split="train", \
-                        transform=transforms.Downsample(spatial_factor=factor), 
+                        transform=transforms.Downsample(spatial_factor=factor),
                         target_transform=label_transform)
         val_data_orig = ThreeETplus_Eyetracking(save_to=args.data_dir, split="val", \
                         transform=transforms.Downsample(spatial_factor=factor),
                         target_transform=label_transform)
 
-        # Then we slice the event recordings into sub-sequences. 
-        # The time-window is determined by the sequence length (train_length, val_length) 
+        # Then we slice the event recordings into sub-sequences.
+        # The time-window is determined by the sequence length (train_length, val_length)
         # and the temporal subsample factor.
         slicing_time_window = args.train_length*int(10000/temp_subsample_factor) #microseconds
         train_stride_time = int(10000/temp_subsample_factor*args.train_stride) #microseconds
@@ -140,8 +146,8 @@ def main(args):
         val_slicer=SliceByTimeEventsTargets(slicing_time_window, overlap=0, \
                         seq_length=args.val_length, seq_stride=args.val_stride, include_incomplete=False)
 
-        # After slicing the raw event recordings into sub-sequences, 
-        # we make each subsequences into your favorite event representation, 
+        # After slicing the raw event recordings into sub-sequences,
+        # we make each subsequences into your favorite event representation,
         # in this case event voxel-grid
         post_slicer_transform = transforms.Compose([
             SliceLongEventsToShort(time_window=int(10000/temp_subsample_factor), overlap=0, include_incomplete=True),
@@ -153,7 +159,7 @@ def main(args):
         train_data = SlicedDataset(train_data_orig, train_slicer, transform=post_slicer_transform, metadata_path=f"./metadata/3et_train_tl_{args.train_length}_ts{args.train_stride}_ch{args.n_time_bins}")
         val_data = SlicedDataset(val_data_orig, val_slicer, transform=post_slicer_transform, metadata_path=f"./metadata/3et_val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}")
 
-        augmentation = RandomSpatialAugmentor(dataset_wh = (1, 1), augm_config=args.data_augmentation) 
+        augmentation = RandomSpatialAugmentor(dataset_wh = (1, 1), augm_config=args.data_augmentation)
 
         # cache the dataset to disk to speed up training. The first epoch will be slow, but the following epochs will be fast.
         train_data = DiskCachedDataset(train_data, cache_path=f'./cached_dataset/train_tl_{args.train_length}_ts{args.train_stride}_ch{args.n_time_bins}', transforms=augmentation)
@@ -176,18 +182,18 @@ def main(args):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    # training management arguments     
+    # training management arguments
     parser.add_argument("--mlflow_path", type=str, help="path to MLflow tracking server")
     parser.add_argument("--experiment_name", type=str, help="name of the experiment")
     parser.add_argument("--run_name", type=str, help="name of the run")
-    
-    # a config file 
+
+    # a config file
     parser.add_argument("--config_file", type=str, default=None, help="path to JSON configuration file")
 
     # training hyperparameters
     parser.add_argument("--lr", type=float, help="learning rate")
     parser.add_argument("--num_epochs", type=int, help="number of epochs")
-    
+
     args = parser.parse_args()
 
     main(args)
