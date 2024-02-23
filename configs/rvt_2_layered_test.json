@@ -1,5 +1,5 @@
 {
-    "device": "cuda:7",
+    "device": "cuda:0",
     "mlflow_path": "./mlruns",
     "experiment_name": "debug",
     "data_dir": "./event_data",

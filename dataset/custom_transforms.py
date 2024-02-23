@@ -270,6 +270,8 @@ class NormalizeLabel:
 class AugmentationState:
     apply_h_flip: bool
     apply_noise: bool
+    apply_time_reversal: bool
+    apply_random_time_shift: bool
 
 def torch_uniform_sample_scalar(min_value: float, max_value: float):
     assert max_value >= min_value, f'{max_value=} is smaller than {min_value=}'
@@ -295,15 +297,21 @@ class RandomSpatialAugmentor:
         self.apply_noise_prob = augm_config.prob_noise
         self.apply_noise_max_factor = augm_config.max_noise_factor
         self.apply_noise_min_factor = augm_config.min_noise_factor
+        self.apply_time_reversal = augm_config.time_reversal
+        self.apply_random_time_shift = augm_config.random_time_shift
 
         self.augm_state = AugmentationState(
             apply_h_flip=False,
             apply_noise=False,
+            apply_time_reversal=False,
+            apply_random_time_shift=False
             )
 
     def randomize_augmentation(self):
         self.augm_state.apply_h_flip = self.h_flip_prob > th.rand(1).item()
         self.augm_state.apply_noise = self.apply_noise_prob > th.rand(1).item()
+        self.augm_state.apply_time_reversal = self.apply_time_reversal > th.rand(1).item()
+        self.augm_state.apply_random_time_shift = self.apply_random_time_shift > th.rand(1).item()
 
     def h_flip(self, data):
         if len(data.shape) == 2:
@@ -322,6 +330,9 @@ class RandomSpatialAugmentor:
         noisy_data = data + noise
         return noisy_data
 
+    def random_time_shift(self, input, target):
+        start = np.random.randint(0, input.shape[0])
+        return np.concatenate((input[start:], input[::-1]), axis=0)[:input.shape[0]], np.concatenate((target[start:], target[::-1]), axis=0)[:target.shape[0]]
 
     def __call__(self, input, target):
         self.randomize_augmentation()
@@ -331,4 +342,9 @@ class RandomSpatialAugmentor:
         if self.augm_state.apply_noise:
             input = self.add_random_noise(input)
 
+        if self.augm_state.apply_time_reversal:
+            input, target = input[::-1].copy(), target[::-1].copy()
+
+        if self.augm_state.apply_random_time_shift:
+            input, target = self.random_time_shift(input, target)
         return (input, target)
