@@ -2,8 +2,9 @@ import argparse, json, os
 import torch
 from model.BaselineEyeTrackingModel import CNN_GRU
 from model.RecurrentVisionTransformer import RVT
+from model.FastRecurrentTransformer import FRT
 from utils.timer import CudaTimer
-
+from torchinfo import summary
 
 def main(args):
     # Load hyperparameters from JSON configuration file
@@ -20,13 +21,11 @@ def main(args):
     model = eval(args.architecture)(args).to(args.device)
     factor = args.spatial_factor    
 
-    # print number of params
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    non_trainable_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
-    print("Model has:", trainable_params, "trainable parameters")
-    print("Model has:", non_trainable_params, "non-trainable parameters")
     data = torch.ones((1,1,3,int(640*factor), int(480*factor)))
     data = data.to(args.device)
+
+    # print model summary
+    summary(model, input_data=data, verbose=2)
     for i in range(1000):
         with CudaTimer(device=data.device, timer_name="model_inference"):
             output = model(data)
