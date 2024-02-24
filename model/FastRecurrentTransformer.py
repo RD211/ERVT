@@ -134,7 +134,7 @@ class MLP(nn.Module):
 
     def forward(self, x):
         return self.net(x)
-    
+
 class LayerScale(nn.Module):
     def __init__(self, dim: int, init_values: float = 1e-5, inplace: bool = False):
         super().__init__()
@@ -172,6 +172,21 @@ class FRTBlock(nn.Module):
 
         return x_unflattened, c
 
+class BatchNorm2d(nn.BatchNorm2d):
+    '''(conv => BN => ReLU) * 2'''
+
+    def __init__(self, num_features, activation='none'):
+        super(BatchNorm2d, self).__init__(num_features=num_features)
+        if activation == 'leaky_relu':
+            self.activation = nn.LeakyReLU()
+        elif activation == 'none':
+            self.activation = lambda x:x
+        else:
+            raise Exception("Accepted activation: ['leaky_relu']")
+
+    def forward(self, x):
+        return self.activation(super(BatchNorm2d, self).forward(x))
+
 class ConvBNReLU(nn.Module):
     def __init__(self, in_chan, out_chan, ks=3, stride=1, padding=1, norm_layer=None, activation='leaky_relu', *args, **kwargs):
         super(ConvBNReLU, self).__init__()
@@ -183,7 +198,7 @@ class ConvBNReLU(nn.Module):
                 bias = False)
         self.norm_layer = norm_layer
         if self.norm_layer is not None:
-            self.bn = norm_layer(out_chan)
+            self.bn = BatchNorm2d(out_chan, activation)
         else:
             self.bn =  lambda x:x
 
@@ -192,7 +207,6 @@ class ConvBNReLU(nn.Module):
     def forward(self, x):
         x = self.conv(x)
         x = self.bn(x)
-        x = F.relu(x)
         return x
 
     def init_weight(self):
@@ -217,7 +231,7 @@ class FastAttention(nn.Module):
 
         self.latlayer3 = ConvBNReLU(in_chan, in_chan, ks=1, stride=1, padding=0, norm_layer=norm_layer)
 
-        #self.init_weight()
+        self.init_weight()
 
     def forward(self, feat):
         # Expect shape N x C x H x W
@@ -305,7 +319,7 @@ class FRT(nn.Module):
         for t in range(N):
 
             # We get the input for the current time step
-            xt = x[:, t, :, :, :] 
+            xt = x[:, t, :, :, :]
 
             # For each stage we apply the RVTBlock
             for i, stage in enumerate(self.stages):
@@ -323,6 +337,6 @@ class FRT(nn.Module):
             final_output = self.detection(xt)
             outputs.append(final_output)
 
-        coordinates = torch.stack(outputs, dim=1) 
+        coordinates = torch.stack(outputs, dim=1)
 
         return coordinates
