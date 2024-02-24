@@ -18,7 +18,7 @@ class ConvBNReLU(nn.Module):
                 bias = False)
         self.norm_layer = norm_layer
         if self.norm_layer is not None:
-            self.bn = norm_layer(out_chan)
+            self.bn = BatchNorm2d(out_chan, activation)
         else:
             self.bn =  lambda x:x
 
@@ -27,7 +27,6 @@ class ConvBNReLU(nn.Module):
     def forward(self, x):
         x = self.conv(x)
         x = self.bn(x)
-        x = F.relu(x)
         return x
 
     def init_weight(self):
@@ -81,6 +80,21 @@ class LinearHead(nn.Module):
 
     def forward(self, x):
         return self.linear(x)
+
+class BatchNorm2d(nn.BatchNorm2d):
+    '''(conv => BN => ReLU) * 2'''
+
+    def __init__(self, num_features, activation='none'):
+        super(BatchNorm2d, self).__init__(num_features=num_features)
+        if activation == 'leaky_relu':
+            self.activation = nn.LeakyReLU()
+        elif activation == 'none':
+            self.activation = lambda x:x
+        else:
+            raise Exception("Accepted activation: ['leaky_relu']")
+
+    def forward(self, x):
+        return self.activation(super(BatchNorm2d, self).forward(x))
 
 class MLP(nn.Module):
     def __init__(self,

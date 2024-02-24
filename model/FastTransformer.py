@@ -5,7 +5,7 @@ from argparse import Namespace
 from functools import reduce
 import math
 
-from model.base import MLP, GLU, LinearHead, ConvBNReLU
+from model.base import MLP, GLU, LinearHead, ConvBNReLU, BatchNorm2d
 
 
 class VFAttention(nn.Module):
