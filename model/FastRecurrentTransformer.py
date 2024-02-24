@@ -231,7 +231,7 @@ class FastAttention(nn.Module):
 
         self.latlayer3 = ConvBNReLU(in_chan, in_chan, ks=1, stride=1, padding=0, norm_layer=norm_layer)
 
-        #self.init_weight()
+        self.init_weight()
 
     def forward(self, feat):
         # Expect shape N x C x H x W
