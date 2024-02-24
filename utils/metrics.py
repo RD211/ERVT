@@ -69,7 +69,7 @@ def px_euclidean_dist(target, prediction, width_scale, height_scale):
     :return: a dictionary of p-total correct and batch size of this batch
     """
     # flatten the N and seqlen dimension of target and prediction
-    target = target.reshape(-1, 3)[:, :2]
+    target = target.reshape(-1, 2)
     prediction = prediction.reshape(-1, 2)
 
     dis = target - prediction
@@ -99,6 +99,22 @@ class weighted_MSELoss(nn.Module):
             return batch_loss
         
 class weighted_RMSE(nn.Module):
+    def __init__(self, weights, reduction='mean'):
+        super().__init__()
+        self.weights = weights
+        self.reduction = reduction
+        self.mseloss = nn.MSELoss(reduction='none')
+
+    def forward(self, inputs, targets):
+        batch_loss = self.mseloss(inputs, targets) * self.weights
+        if self.reduction == 'mean':
+            return torch.sqrt(torch.mean(batch_loss))
+        elif self.reduction == 'sum':
+            return torch.sqrt*(torch.sum(batch_loss))
+        else:
+            return batch_loss
+        
+class weighted_RMSE_tpo(nn.Module):
     def __init__(self, weights, reduction='mean'):
         super().__init__()
         self.weights = weights

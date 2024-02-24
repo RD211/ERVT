@@ -18,10 +18,10 @@ from model.BaselineEyeTrackingModel import CNN_GRU
 from model.RecurrentVisionTransformer import RVT
 from model.FastRecurrentTransformer import FRT
 from utils.training_utils import train_epoch, validate_epoch, top_k_checkpoints
-from utils.metrics import weighted_MSELoss, weighted_RMSE
+from utils.metrics import weighted_MSELoss, weighted_RMSE, weighted_RMSE_tpo
 from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
     TemporalSubsample, NormalizeLabel, SliceLongEventsToShort, \
-    EventSlicesToVoxelGrid, SliceByTimeEventsTargets, RandomSpatialAugmentor
+    EventSlicesToVoxelGrid, SliceByTimeEventsTargets, RandomSpatialAugmentor, TPO
 import tonic.transforms as transforms
 from tonic import SlicedDataset, DiskCachedDataset
 
@@ -109,6 +109,9 @@ def main(args):
         elif args.loss == "weighted_rmse":
             criterion = weighted_RMSE(weights=torch.tensor((args.sensor_width/args.sensor_height, 1)).to(args.device), \
                                          reduction='mean')
+        elif args.loss == "weighted_rmse_tpo":
+            criterion = weighted_RMSE_tpo(weights=torch.tensor((args.sensor_width/args.sensor_height, 1, args.sensor_width/args.sensor_height, 1)).to(args.device), \
+                                         reduction='mean')
         else:
             raise ValueError("Invalid loss name")
 
@@ -119,7 +122,8 @@ def main(args):
         label_transform = transforms.Compose([
             ScaleLabel(factor),
             TemporalSubsample(temp_subsample_factor),
-            NormalizeLabel(pseudo_width=640*factor, pseudo_height=480*factor)
+            NormalizeLabel(pseudo_width=640*factor, pseudo_height=480*factor),
+            TPO()
         ])
 
         # Then we define the raw event recording and label dataset, the raw events spatial coordinates are also downsampled

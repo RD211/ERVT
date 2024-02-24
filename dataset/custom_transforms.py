@@ -348,3 +348,20 @@ class RandomSpatialAugmentor:
         if self.augm_state.apply_random_time_shift:
             input, target = self.random_time_shift(input, target)
         return (input, target)
+    
+class TPO():
+    def __call__(self, labels):
+        """
+        Concatenate the targets at time t with the targets at time t+1
+
+        Args:
+        - labels (Tensor): The corresponding labels.
+
+        Returns:
+        - Tensor: A batched tensor of corresponding labels.
+        """
+        # concat the targets at time t with the targets at time t+1, and duplicate the last target
+        labels = np.concatenate((labels, np.append(labels, [labels[-1]], axis=0)[1:, :2]), axis=1) # xt, yt, closed/open, xt+1, yt+1
+        # put the third column to the end
+        labels = np.concatenate((labels[:, :2], labels[:, 3:], labels[:, 2:3]), axis=1)
+        return labels
