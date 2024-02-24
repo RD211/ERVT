@@ -134,7 +134,7 @@ class MLP(nn.Module):
 
     def forward(self, x):
         return self.net(x)
-    
+
 class LayerScale(nn.Module):
     def __init__(self, dim: int, init_values: float = 1e-5, inplace: bool = False):
         super().__init__()
@@ -305,7 +305,7 @@ class FRT(nn.Module):
         for t in range(N):
 
             # We get the input for the current time step
-            xt = x[:, t, :, :, :] 
+            xt = x[:, t, :, :, :]
 
             # For each stage we apply the RVTBlock
             for i, stage in enumerate(self.stages):
@@ -323,6 +323,6 @@ class FRT(nn.Module):
             final_output = self.detection(xt)
             outputs.append(final_output)
 
-        coordinates = torch.stack(outputs, dim=1) 
+        coordinates = torch.stack(outputs, dim=1)
 
         return coordinates
