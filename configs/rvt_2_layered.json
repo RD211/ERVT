@@ -1,9 +1,9 @@
 {
   "device": "cuda:6",
   "mlflow_path": "./../eye/mlruns",
-  "experiment_name": "trial_experiment",
+  "experiment_name": "",
   "data_dir": "./event_data",
-  "run_name": "trial_run",
+  "run_name": "",
   "architecture": "RVT",
   "expansion_ratio": 2,
   "mlp_act_layer": "gelu",
