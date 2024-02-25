@@ -1,5 +1,5 @@
 {
-    "device": "cuda:0",
+    "device": "cuda:5",
     "mlflow_path": "./../eye/mlruns",
     "experiment_name": "trial_experiment",
     "data_dir": "./event_data",
@@ -8,7 +8,7 @@
     "expansion_ratio": 2,
     "mlp_act_layer": "gelu",
     "mlp_gated": true,
-    "gamma": 0.99,
+    "gamma": 0.98,
     "mlp_bias": true,
     "drop_prob": 0.0,
     "stages": [
@@ -39,8 +39,9 @@
     "val_length": 30,
     "n_time_bins": 3,
     "voxel_grid_ch_normaization": false,
-    "loss": "weighted_rmse_tpo",
-    
+    "loss": "weighted_rmse",
+    "weight_decay": 0,
+    "heads": 1,
     "data_augmentation": {
         "prob_hflip": 0.5,
         "prob_noise": 0.3,

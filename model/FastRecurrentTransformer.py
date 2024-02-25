@@ -263,7 +263,7 @@ class LinearHead(nn.Module):
         stride_factor = reduce(lambda x, y: x * y, [s["stride"] for s in args.stages])
         dim = int(args.stages[-1]["output_channels"] * ((args.sensor_width * args.spatial_factor) // stride_factor) * ((args.sensor_height * args.spatial_factor) // stride_factor))
 
-        self.linear = nn.Linear(dim, 4)
+        self.linear = nn.Linear(dim, 2)
 
     def forward(self, x):
         return self.linear(x)
@@ -292,7 +292,10 @@ class FRT(nn.Module):
             for i in range(len(args.stages))
         ])
 
-        self.detection = LinearHead(args)
+        self.detections = nn.ModuleList([
+            LinearHead(args)
+            for i in range(args.heads)
+        ])
 
     def forward(self, x):
         B, N, C, H, W = x.size()
@@ -319,10 +322,14 @@ class FRT(nn.Module):
             # Flatten the tensor
             xt = torch.flatten(xt, 1)
 
-            # We take the last stage output and feed it to the output layer
-            final_output = self.detection(xt)
+            # We take the last stage output and feed it to the output layers
+            final_output = []
+            for head in self.detections:
+                final_output.append(head(xt))
+            
+            final_output = torch.stack(final_output, dim=1)
             outputs.append(final_output)
-
+        
         coordinates = torch.stack(outputs, dim=1) 
 
         return coordinates

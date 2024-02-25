@@ -98,7 +98,7 @@ def main(args):
         print("Model has:", trainable_params, "trainable parameters")
         print("Model has:", non_trainable_params, "non-trainable parameters")
 
-        optimizer = optim.Adam(model.parameters(), lr=args.lr)
+        optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, args.gamma, -1, verbose = True)
 
         if args.loss == "mse":
@@ -108,9 +108,6 @@ def main(args):
                                          reduction='mean')
         elif args.loss == "weighted_rmse":
             criterion = weighted_RMSE(weights=torch.tensor((args.sensor_width/args.sensor_height, 1)).to(args.device), \
-                                         reduction='mean')
-        elif args.loss == "weighted_rmse_tpo":
-            criterion = weighted_RMSE_tpo(weights=torch.tensor((args.sensor_width/args.sensor_height, 1, args.sensor_width/args.sensor_height, 1)).to(args.device), \
                                          reduction='mean')
         else:
             raise ValueError("Invalid loss name")

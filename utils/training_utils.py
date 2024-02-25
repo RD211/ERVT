@@ -13,15 +13,25 @@ def train_epoch(model, train_loader, criterion, optimizer, args):
     for inputs, targets in train_loader:
         optimizer.zero_grad()
         outputs = model(inputs.to(args.device))
+        # outputs = outputs.to(args.device) # why needed?
         #taking only the last frame's label, and first two dim are coordinate, last is open or close so discarded
         targets = targets.to(args.device)
-        loss = criterion(outputs, targets[:,:, :4]) 
+        # Lt =Ls(Bk+1Bk+1)+Ls(BkBk)
+        # L = Lr + Lt
+        Lr = criterion(outputs[:, :, 0, :], targets[:,:, :2])
+        Lt = 0
+        if args.heads == 2:
+            # roll the outputs tensor to the right by 1
+            outputs_shifted = torch.roll(outputs, shifts=1, dims=1)
+            outputs_shifted[:, 0, 1, :] = outputs[:, 0, 0, :] # B_1_' = B_0 (previous future pred at t=0 is current pred at t=0)
+            Lt = criterion(outputs[:, :, 1, :], targets[:, :, 2:4]) + criterion(outputs[:, :, 0, :], outputs_shifted[:, :, 1, :])
+        loss = Lr + Lt
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
 
         # calculate pixel tolerated accuracy
-        p_corr, batch_size = p_acc(targets[:, :, :2], outputs[:, :, :2], \
+        p_corr, batch_size = p_acc(targets[:, :, :2], outputs[:, :, 0, :2], \
                                 width_scale=args.sensor_width*args.spatial_factor, \
                                 height_scale=args.sensor_height*args.spatial_factor, \
                                     pixel_tolerances=args.pixel_tolerances)
@@ -29,7 +39,7 @@ def train_epoch(model, train_loader, criterion, optimizer, args):
         total_samples_all += batch_size
 
         # calculate averaged euclidean distance
-        p_error_total, bs_times_seqlen = px_euclidean_dist(targets[:, :, :2], outputs[:, :, :2], \
+        p_error_total, bs_times_seqlen = px_euclidean_dist(targets[:, :, :2], outputs[:, :, 0, :2], \
                                 width_scale=args.sensor_width*args.spatial_factor, \
                                 height_scale=args.sensor_height*args.spatial_factor)
         total_p_error_all = {f'error_all': (total_p_error_all[f'error_all'] + p_error_total).item()}
@@ -51,11 +61,11 @@ def validate_epoch(model, val_loader, criterion, args):
         for inputs, targets in val_loader:
             outputs = model(inputs.to(args.device))
             targets = targets.to(args.device)
-            loss = criterion(outputs, targets[:,:, :4]) 
+            loss = criterion(outputs[:, :, 0, :], targets[:,:, :2]) 
             total_loss += loss.item()
 
             # calculate pixel tolerated accuracy
-            p_corr, batch_size = p_acc(targets[:, :, :2], outputs[:, :, :2], \
+            p_corr, batch_size = p_acc(targets[:, :, :2], outputs[:, :, 0, :], \
                                     width_scale=args.sensor_width*args.spatial_factor, \
                                     height_scale=args.sensor_height*args.spatial_factor, \
                                         pixel_tolerances=args.pixel_tolerances)
@@ -63,7 +73,7 @@ def validate_epoch(model, val_loader, criterion, args):
             total_samples_all += batch_size
 
             # calculate averaged euclidean distance
-            p_error_total, bs_times_seqlen = px_euclidean_dist(targets[:, :, :2], outputs[:, :, :2], \
+            p_error_total, bs_times_seqlen = px_euclidean_dist(targets[:, :, :2], outputs[:, :, 0, :], \
                                     width_scale=args.sensor_width*args.spatial_factor, \
                                     height_scale=args.sensor_height*args.spatial_factor)
             total_p_error_all = {f'error_all': (total_p_error_all[f'error_all'] + p_error_total).item()}
