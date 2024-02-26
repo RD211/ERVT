@@ -185,6 +185,9 @@ class EventSlicesToSpikeTensor:
         ys = events["y"].astype(int)
         pols = events["p"]
 
+        # save positions as 0 and 1 polarity
+        pos = pols
+        pos[pos == -1] = 0
         pols[pols == 0] = -1 # polarity should be +1/-1
 
         tis = ts.astype(int)
@@ -194,7 +197,7 @@ class EventSlicesToSpikeTensor:
         np.add.at(
             event_spike,
             xs[valid_indices] + ys[valid_indices] * self.sensor_size[0] + tis[valid_indices] * self.sensor_size[0] * self.sensor_size[1]
-            + pols[valid_indices] * self.n_time_bins * self.sensor_size[0] * self.sensor_size[1],
+            + pos[valid_indices] * self.n_time_bins * self.sensor_size[0] * self.sensor_size[1],
             pols[valid_indices]
         )
 
