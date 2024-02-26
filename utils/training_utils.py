@@ -13,7 +13,6 @@ def train_epoch(model, train_loader, criterion, optimizer, args):
     for inputs, targets in train_loader:
         optimizer.zero_grad()
         outputs = model(inputs.to(args.device))
-        # outputs = outputs.to(args.device) # why needed?
         #taking only the last frame's label, and first two dim are coordinate, last is open or close so discarded
         targets = targets.to(args.device)
         # Lt =Ls(Bk+1Bk+1)+Ls(BkBk)

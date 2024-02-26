@@ -8,7 +8,7 @@
     "expansion_ratio": 2,
     "mlp_act_layer": "gelu",
     "mlp_gated": true,
-    "gamma": 0.98,
+    "gamma": 0.99,
     "mlp_bias": true,
     "drop_prob": 0.0,
     "stages": [
@@ -37,7 +37,7 @@
     "val_stride": 30,
     "train_length": 30,
     "val_length": 30,
-    "n_time_bins": 3,
+    "n_time_bins": 1,
     "voxel_grid_ch_normaization": false,
     "loss": "weighted_rmse",
     "weight_decay": 0,

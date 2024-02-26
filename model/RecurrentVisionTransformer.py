@@ -320,7 +320,10 @@ class RVT(nn.Module):
             for i in range(len(args.stages))
         ])
 
-        self.detection = LinearHead(args)
+        self.detections = nn.ModuleList([
+            LinearHead(args)
+            for i in range(args.heads)
+        ])
 
     def forward(self, x):
         B, N, C, H, W = x.size()
@@ -348,9 +351,13 @@ class RVT(nn.Module):
             xt = torch.flatten(xt, 1)
 
             # We take the last stage output and feed it to the output layer
-            final_output = self.detection(xt)
+            final_output = []
+            for head in self.detections:
+                final_output.append(head(xt))
+            
+            final_output = torch.stack(final_output, dim=1)
             outputs.append(final_output)
-
+        
         coordinates = torch.stack(outputs, dim=1) 
 
         return coordinates
