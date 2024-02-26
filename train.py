@@ -21,7 +21,7 @@ from utils.training_utils import train_epoch, validate_epoch, top_k_checkpoints
 from utils.metrics import weighted_MSELoss, weighted_RMSE
 from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
     TemporalSubsample, NormalizeLabel, SliceLongEventsToShort, \
-    EventSlicesToVoxelGrid, SliceByTimeEventsTargets, RandomSpatialAugmentor
+    EventSlicesToVoxelGrid, SliceByTimeEventsTargets, RandomSpatialAugmentor, EventSlicesToSpikeTensor
 import tonic.transforms as transforms
 from tonic import SlicedDataset, DiskCachedDataset
 
@@ -147,8 +147,8 @@ def main(args):
         # in this case event voxel-grid
         post_slicer_transform = transforms.Compose([
             SliceLongEventsToShort(time_window=int(10000/temp_subsample_factor), overlap=0, include_incomplete=True),
-            EventSlicesToVoxelGrid(sensor_size=(int(640*factor), int(480*factor), 2), \
-                                    n_time_bins=args.n_time_bins, per_channel_normalize=args.voxel_grid_ch_normaization)
+            EventSlicesToSpikeTensor(sensor_size=(int(640*factor), int(480*factor), 2), \
+                                    n_time_bins=args.n_time_bins, per_channel_normalization=args.voxel_grid_ch_normaization)
         ])
 
         # We use the Tonic SlicedDataset class to handle the collation of the sub-sequences into batches.
