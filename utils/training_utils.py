@@ -12,9 +12,10 @@ def train_epoch(model, train_loader, criterion, optimizer, args):
     # NOTE: the optimization strategy is TBPTT!
     # the Pytorch model needs to accept and return the hidden states of the RNN
     # in order to detach the gradients at specific intervals
+    # if args.tbptt is equal to args.train_length, this should be equivalent to BPTT
 
     assert args.train_length % args.tbptt == 0, "The sequence length has to be divisible by the TBPTT split"
-    chuncks = [args.tbptt] * (args.train_length / args.tbptt)
+    chuncks = [args.tbptt] * (args.train_length // args.tbptt)
     for inputs, targets in train_loader:
         # the batched input needs to be split in equally sized chuncks.
         # normal BPTT is applied to every chuck, with the hidden states shared between chuncks.
@@ -40,9 +41,9 @@ def train_epoch(model, train_loader, criterion, optimizer, args):
             # avoid passing gradients further, detach the hidden states from the computational graph
             # NOTE: hidden is considered to be a list (corresponding to multiple stages)
             for i in range(len(hidden)):
-                hidden[i] = hidden[i].detach()
+                hidden[i] = (hidden[i][0].detach(), hidden[i][1].detach())
 
-        outputs = torch.cat(acc_outputs, dim=1) # concatenate over the time dimension
+        outputs = torch.cat(acc_outputs, dim=1).detach().cpu() # concatenate over the time dimension
         total_loss += seq_loss / len(chuncks) # track the whole sequence loss
         # calculate pixel tolerated accuracy
         p_corr, batch_size = p_acc(targets[:, :, :2], outputs[:, :, :], \
@@ -74,7 +75,7 @@ def validate_epoch(model, val_loader, criterion, args):
     total_samples_all, total_sample_p_error_all  = 0, 0
     with torch.no_grad():
         for inputs, targets in val_loader:
-            outputs = model(inputs.to(args.device))
+            outputs, _ = model(inputs.to(args.device))
             targets = targets.to(args.device)
             loss = criterion(outputs, targets[:,:, :2])
             total_loss += loss.item()
