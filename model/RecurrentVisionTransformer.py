@@ -133,7 +133,7 @@ class MLP(nn.Module):
 
     def forward(self, x):
         return self.net(x)
-    
+
 class LayerScale(nn.Module):
     def __init__(self, dim: int, init_values: float = 1e-5, inplace: bool = False):
         super().__init__()
@@ -145,7 +145,7 @@ class LayerScale(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Applying the scaling operation. If 'inplace' is True, 'mul_' is used to modify the input tensor directly.
         return x.mul_(self.gamma) if self.inplace else x * self.gamma
-    
+
 class SelfAttentionCl(nn.Module):
     """ Channels-last multi-head self-attention (B, ..., C) """
     def __init__(
@@ -179,7 +179,7 @@ class UnifiedBlockGridAttention(nn.Module):
     def __init__(self, channels: int, partition_size: int, dim_head: int = 32, mode: str = 'block'):
         super().__init__()
         assert mode in ['block', 'grid'], "Mode must be either 'block' or 'grid'."
-        
+
         self.channels = channels
         self.partition_size = partition_size
         self.mode = mode
@@ -202,7 +202,7 @@ class UnifiedBlockGridAttention(nn.Module):
                 raise ValueError(f"Input size must be divisible by the grid size. Got: {H}x{W}, grid size: {self.partition_size}")
             shape = (B, self.partition_size, H // self.partition_size, self.partition_size, W // self.partition_size, C)
             permute_order = (0, 2, 4, 1, 3, 5)
-        
+
         x = x.view(shape)
         windows = x.permute(permute_order).contiguous().view(-1, self.partition_size, self.partition_size, C)
         return windows
@@ -219,11 +219,11 @@ class UnifiedBlockGridAttention(nn.Module):
         else:  # grid mode
             shape = (-1, H // self.partition_size, W // self.partition_size, self.partition_size, self.partition_size, C)
             permute_order = (0, 3, 1, 4, 2, 5)
-        
+
         x = windows.view(shape)
         x = x.permute(permute_order).contiguous().view(-1, H, W, C)
         return x
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Applies self-attention based on the selected partitioning mode (block or grid).
@@ -245,7 +245,7 @@ class RVTBlock(nn.Module):
         args = Namespace(**args, **kwargs)
         self.conv = nn.Conv2d(args.input_channels, args.output_channels, kernel_size=args.kernel_size, stride=args.stride, padding=args.kernel_size//2)
         self.block_sa = UnifiedBlockGridAttention(channels=args.output_channels, partition_size=args.partition_size, dim_head=args.dim_head, mode='block')
-        
+
         self.ln = nn.LayerNorm(args.output_channels)
 
         self.mlpb = MLP(dim=args.output_channels, channel_last=True, expansion_ratio=args.expansion_ratio, act_layer=args.mlp_act_layer, gated = args.mlp_gated, bias = args.mlp_bias, drop_prob=args.drop_prob)
@@ -267,12 +267,14 @@ class RVTBlock(nn.Module):
         x_bsa = x_bsa + x_conv
         x_bsa = self.ln(x_bsa)
         x_bsa = self.mlpb(x_bsa)
+        x_bsa = self.ls1(x_bsa)
 
 
         x_gsa = self.grid_sa(x_bsa)
         x_gsa = x_gsa + x_bsa
         x_gsa = self.ln(x_gsa)
         x_gsa = self.mlpg(x_gsa)
+        x_gsa = self.ls2(x_gsa)
 
         x_unflattened = x_gsa.permute(0, 3, 1, 2)
         x_unflattened, c = self.lstm(x_unflattened, (c, h))
@@ -333,7 +335,7 @@ class RVT(nn.Module):
         for t in range(N):
 
             # We get the input for the current time step
-            xt = x[:, t, :, :, :] 
+            xt = x[:, t, :, :, :]
 
             # For each stage we apply the RVTBlock
             for i, stage in enumerate(self.stages):
@@ -351,6 +353,6 @@ class RVT(nn.Module):
             final_output = self.detection(xt)
             outputs.append(final_output)
 
-        coordinates = torch.stack(outputs, dim=1) 
+        coordinates = torch.stack(outputs, dim=1)
 
         return coordinates
