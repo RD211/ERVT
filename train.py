@@ -17,23 +17,27 @@ from torch.utils.data import DataLoader
 from model.BaselineEyeTrackingModel import CNN_GRU
 from model.RecurrentVisionTransformer import RVT
 from model.FastRecurrentTransformer import FRT
-from utils.training_utils import train_epoch, validate_epoch, top_k_checkpoints
-from utils.metrics import weighted_MSELoss, weighted_RMSE
+from utils.training_utils import set_deterministic, train_epoch, validate_epoch, top_k_checkpoints
+from utils.metrics import log_avg_metrics, weighted_MSELoss, weighted_RMSE
 from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
     TemporalSubsample, NormalizeLabel, SliceLongEventsToShort, \
     EventSlicesToVoxelGrid, SliceByTimeEventsTargets, RandomSpatialAugmentor
 import tonic.transforms as transforms
 from tonic import SlicedDataset, DiskCachedDataset
+from sklearn.model_selection import KFold
 
 def train(model, train_loader, val_loader, criterion, optimizer, scheduler, args):
     best_val_loss = float("inf")
-
+    metrics_return_train = []
+    metrics_return_val = []
     # Training loop
     for epoch in range(args.num_epochs):
         model, train_loss, metrics = train_epoch(model, train_loader, criterion, optimizer, args)
         mlflow.log_metric("train_loss", train_loss, step=epoch)
         mlflow.log_metrics(metrics['tr_p_acc_all'], step=epoch)
         mlflow.log_metrics(metrics['tr_p_error_all'], step=epoch)
+        metrics["train_loss"] = train_loss
+        metrics_return_train.append(metrics)
 
         if args.val_interval > 0 and (epoch + 1) % args.val_interval == 0:
             val_loss, val_metrics = validate_epoch(model, val_loader, criterion, args)
@@ -50,11 +54,13 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler, args
             mlflow.log_metric("val_loss", val_loss, step=epoch)
             mlflow.log_metrics(val_metrics['val_p_acc_all'], step=epoch)
             mlflow.log_metrics(val_metrics['val_p_error_all'], step=epoch)
+            val_metrics["val_loss"] = val_loss
+            metrics_return_val.append(val_metrics)
         # Print progress
         print(f"Epoch {epoch+1}/{args.num_epochs}: Train Loss: {train_loss:.4f}")
         scheduler.step()
 
-    return model
+    return model, metrics_return_train, metrics_return_val
 
 def main(args):
     # Load hyperparameters from JSON configuration file
@@ -68,110 +74,113 @@ def main(args):
         args = argparse.Namespace(**config)
     else:
         raise ValueError("Please provide a JSON configuration file.")
+    
+    set_deterministic(args.seed)
 
-    # Set up MLflow logging
+    if args.loss == "mse":
+        criterion = nn.MSELoss()
+    elif args.loss == "weighted_mse":
+        criterion = weighted_MSELoss(weights=torch.tensor((args.sensor_width/args.sensor_height, 1)).to(args.device), \
+                                        reduction='mean')
+    elif args.loss == "weighted_rmse":
+        criterion = weighted_RMSE(weights=torch.tensor((args.sensor_width/args.sensor_height, 1)).to(args.device), \
+                                        reduction='mean')
+    else:
+        raise ValueError("Invalid loss name")
+
     mlflow.set_tracking_uri(args.mlflow_path)
     mlflow.set_experiment(experiment_name=args.experiment_name)
+    factor = args.spatial_factor # spatial downsample factor
+    temp_subsample_factor = args.temporal_subsample_factor # downsampling original 100Hz label to 20Hz
+    # First we define the label transformations
+    label_transform = transforms.Compose([
+        ScaleLabel(factor),
+        TemporalSubsample(temp_subsample_factor),
+        NormalizeLabel(pseudo_width=640*factor, pseudo_height=480*factor)
+    ])
+    # Then we define the raw event recording and label dataset, the raw events spatial coordinates are also downsampled
+    train_data_orig = ThreeETplus_Eyetracking(save_to=args.data_dir, split="train", \
+                    transform=transforms.Downsample(spatial_factor=factor),
+                    target_transform=label_transform)
+    val_data_orig = ThreeETplus_Eyetracking(save_to=args.data_dir, split="val", \
+                    transform=transforms.Downsample(spatial_factor=factor),
+                    target_transform=label_transform)
 
-    # Start MLflow run
-    with mlflow.start_run(run_name=args.run_name):
-        # dump this training file to MLflow artifact
-        mlflow.log_artifact(__file__)
+    # Then we slice the event recordings into sub-sequences.
+    # The time-window is determined by the sequence length (train_length, val_length)
+    # and the temporal subsample factor.
+    slicing_time_window = args.train_length*int(10000/temp_subsample_factor) #microseconds
+    train_stride_time = int(10000/temp_subsample_factor*args.train_stride) #microseconds
 
-        # Log all hyperparameters to MLflow
-        mlflow.log_params(vars(args))
-        # also dump the args to a JSON file in MLflow artifact
-        with open(os.path.join(mlflow.get_artifact_uri(), "args.json"), 'w') as f:
-            json.dump(vars(args), f)
+    train_slicer=SliceByTimeEventsTargets(slicing_time_window, overlap=slicing_time_window-train_stride_time, \
+                    seq_length=args.train_length, seq_stride=args.train_stride, include_incomplete=False)
+    # the validation set is sliced to non-overlapping sequences
+    val_slicer=SliceByTimeEventsTargets(slicing_time_window, overlap=0, \
+                    seq_length=args.val_length, seq_stride=args.val_stride, include_incomplete=False)
 
-        # Dump all the files in model/ to MLflow artifact
-        for file in os.listdir("./model"):
-            if file.endswith(".py"):
-                mlflow.log_artifact(os.path.join("./model", file))
+    # After slicing the raw event recordings into sub-sequences,
+    # we make each subsequences into your favorite event representation,
+    # in this case event voxel-grid
+    post_slicer_transform = transforms.Compose([
+        SliceLongEventsToShort(time_window=int(10000/temp_subsample_factor), overlap=0, include_incomplete=True),
+        EventSlicesToVoxelGrid(sensor_size=(int(640*factor), int(480*factor), 2), \
+                                n_time_bins=args.n_time_bins, per_channel_normalize=args.voxel_grid_ch_normaization)
+    ])
 
-        # Define your model, optimizer, and criterion
-        model = eval(args.architecture)(args).to(args.device)
-        # print the number of parameters of the model
-        print(model)
-        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        non_trainable_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
-        print("Model has:", trainable_params, "trainable parameters")
-        print("Model has:", non_trainable_params, "non-trainable parameters")
+    # We use the Tonic SlicedDataset class to handle the collation of the sub-sequences into batches.
+    train_data = SlicedDataset(train_data_orig, train_slicer, transform=post_slicer_transform, metadata_path=f"./metadata/3et_train_tl_{args.train_length}_ts{args.train_stride}_ch{args.n_time_bins}")
+    val_data = SlicedDataset(val_data_orig, val_slicer, transform=post_slicer_transform, metadata_path=f"./metadata/3et_val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}")
 
-        optimizer = optim.Adam(model.parameters(), lr=args.lr)
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, args.gamma, -1, verbose = True)
+    augmentation = RandomSpatialAugmentor(dataset_wh = (1, 1), augm_config=args.data_augmentation)
 
-        if args.loss == "mse":
-            criterion = nn.MSELoss()
-        elif args.loss == "weighted_mse":
-            criterion = weighted_MSELoss(weights=torch.tensor((args.sensor_width/args.sensor_height, 1)).to(args.device), \
-                                         reduction='mean')
-        elif args.loss == "weighted_rmse":
-            criterion = weighted_RMSE(weights=torch.tensor((args.sensor_width/args.sensor_height, 1)).to(args.device), \
-                                         reduction='mean')
-        else:
-            raise ValueError("Invalid loss name")
+    data = torch.utils.data.ConcatDataset([train_data, val_data])
+    
+    val_metrics = []
+    train_metrics = []
+    kf = KFold(n_splits=args.num_folds, shuffle=True, random_state=args.random_state)
 
-        factor = args.spatial_factor # spatial downsample factor
-        temp_subsample_factor = args.temporal_subsample_factor # downsampling original 100Hz label to 20Hz
+    for fold, (train_index, val_index) in enumerate(kf.split(data)):
+        with mlflow.start_run(run_name=args.run_name + f"_fold{fold+1} / {args.num_folds}"):
+            # ====== MLflow logging ======
+            mlflow.log_artifact(__file__)
+            mlflow.log_params(vars(args))
+            with open(os.path.join(mlflow.get_artifact_uri(), "args.json"), 'w') as f:
+                json.dump(vars(args), f)
+            for file in os.listdir("./model"):
+                if file.endswith(".py"):
+                    mlflow.log_artifact(os.path.join("./model", file))
+            # ============================
+                    
+            model = eval(args.architecture)(args).to(args.device)
 
-        # First we define the label transformations
-        label_transform = transforms.Compose([
-            ScaleLabel(factor),
-            TemporalSubsample(temp_subsample_factor),
-            NormalizeLabel(pseudo_width=640*factor, pseudo_height=480*factor)
-        ])
+            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+            non_trainable_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
+            print("Model has:", trainable_params, "trainable parameters")
+            print("Model has:", non_trainable_params, "non-trainable parameters")
 
-        # Then we define the raw event recording and label dataset, the raw events spatial coordinates are also downsampled
-        train_data_orig = ThreeETplus_Eyetracking(save_to=args.data_dir, split="train", \
-                        transform=transforms.Downsample(spatial_factor=factor),
-                        target_transform=label_transform)
-        val_data_orig = ThreeETplus_Eyetracking(save_to=args.data_dir, split="val", \
-                        transform=transforms.Downsample(spatial_factor=factor),
-                        target_transform=label_transform)
+            optimizer = optim.Adam(model.parameters(), lr=args.lr)
+            scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, args.gamma, -1, verbose = True)
+            print(f"Fold {fold+1}/{args.num_folds}")
+            
+            train_data = torch.utils.data.Subset(data, train_index)
+            val_data = torch.utils.data.Subset(data, val_index)
+            train_data = DiskCachedDataset(train_data, cache_path=f'./cached_dataset/train_tl_{args.train_length}_ts{args.train_stride}_ch{args.n_time_bins}_fold{fold+1}', transforms=augmentation)
+            val_data = DiskCachedDataset(val_data, cache_path=f'./cached_dataset/val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}_fold{fold+1}')
+        
+            train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, \
+                                    num_workers=int(os.cpu_count()-2), pin_memory=True, generator=(torch.Generator()).manual_seed(args.seed))
+            val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=False, \
+                                    num_workers=int(os.cpu_count()-2), generator=(torch.Generator()).manual_seed(args.seed))
+    
+            model, train_m, val_m = train(model, train_loader, val_loader, criterion, optimizer, scheduler, args)
+            val_metrics.append(val_m)
+            train_metrics.append(train_m)
 
-        # Then we slice the event recordings into sub-sequences.
-        # The time-window is determined by the sequence length (train_length, val_length)
-        # and the temporal subsample factor.
-        slicing_time_window = args.train_length*int(10000/temp_subsample_factor) #microseconds
-        train_stride_time = int(10000/temp_subsample_factor*args.train_stride) #microseconds
+            torch.save(model.state_dict(), os.path.join(mlflow.get_artifact_uri(), f"model_fold{fold+1}.pth"))
+            mlflow.end_run()
 
-        train_slicer=SliceByTimeEventsTargets(slicing_time_window, overlap=slicing_time_window-train_stride_time, \
-                        seq_length=args.train_length, seq_stride=args.train_stride, include_incomplete=False)
-        # the validation set is sliced to non-overlapping sequences
-        val_slicer=SliceByTimeEventsTargets(slicing_time_window, overlap=0, \
-                        seq_length=args.val_length, seq_stride=args.val_stride, include_incomplete=False)
+    log_avg_metrics(train_metrics, val_metrics, args)
 
-        # After slicing the raw event recordings into sub-sequences,
-        # we make each subsequences into your favorite event representation,
-        # in this case event voxel-grid
-        post_slicer_transform = transforms.Compose([
-            SliceLongEventsToShort(time_window=int(10000/temp_subsample_factor), overlap=0, include_incomplete=True),
-            EventSlicesToVoxelGrid(sensor_size=(int(640*factor), int(480*factor), 2), \
-                                    n_time_bins=args.n_time_bins, per_channel_normalize=args.voxel_grid_ch_normaization)
-        ])
-
-        # We use the Tonic SlicedDataset class to handle the collation of the sub-sequences into batches.
-        train_data = SlicedDataset(train_data_orig, train_slicer, transform=post_slicer_transform, metadata_path=f"./metadata/3et_train_tl_{args.train_length}_ts{args.train_stride}_ch{args.n_time_bins}")
-        val_data = SlicedDataset(val_data_orig, val_slicer, transform=post_slicer_transform, metadata_path=f"./metadata/3et_val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}")
-
-        augmentation = RandomSpatialAugmentor(dataset_wh = (1, 1), augm_config=args.data_augmentation)
-
-        # cache the dataset to disk to speed up training. The first epoch will be slow, but the following epochs will be fast.
-        train_data = DiskCachedDataset(train_data, cache_path=f'./cached_dataset/train_tl_{args.train_length}_ts{args.train_stride}_ch{args.n_time_bins}', transforms=augmentation)
-        val_data = DiskCachedDataset(val_data, cache_path=f'./cached_dataset/val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}')
-
-        # Finally we wrap the dataset with pytorch dataloader
-        train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, \
-                                  num_workers=int(os.cpu_count()-2), pin_memory=True)
-        val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=False, \
-                                num_workers=int(os.cpu_count()-2))
-
-        # Train your model
-        model = train(model, train_loader, val_loader, criterion, optimizer, scheduler, args)
-
-        # Save your model for the last epoch
-        torch.save(model.state_dict(), os.path.join(mlflow.get_artifact_uri(), f"model_last_epoch{args.num_epochs}.pth"))
 
 
 

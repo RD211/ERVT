@@ -1,5 +1,5 @@
 {
-  "device": "cuda:6",
+  "device": "cuda:4",
   "mlflow_path": "./../eye/mlruns",
   "experiment_name": "trial_experiment",
   "data_dir": "./event_data",
@@ -31,9 +31,12 @@
   "lr": 0.001,
   "num_epochs": 300,
   "batch_size": 8,
+  "num_folds": 4,
+  "random_state": 42,
+  "seed": 42,	
   "spatial_factor": 0.125,
   "temporal_subsample_factor": 0.2,
-  "val_interval": 2,
+  "val_interval": 4,
   "save_k_best": 2,
   "pixel_tolerances": [
     3,
