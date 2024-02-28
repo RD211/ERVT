@@ -308,11 +308,11 @@ class FRT(nn.Module):
 
         self.detection = LinearHead(args)
 
-    def forward(self, x):
+    def forward(self, x, lstm_states=None):
         B, N, C, H, W = x.size()
 
-
-        lstm_states = [None] * len(self.stages)
+        if lstm_states == None:
+            lstm_states = [None] * len(self.stages)
         outputs = []
 
         # We iterate over the time dimension
@@ -339,4 +339,4 @@ class FRT(nn.Module):
 
         coordinates = torch.stack(outputs, dim=1)
 
-        return coordinates
+        return coordinates, lstm_states
