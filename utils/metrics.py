@@ -1,7 +1,9 @@
+import json
+import os
 import torch
 import torch.nn as nn
 import numpy as np
-
+import mlflow
 
 def p_acc(target, prediction, width_scale, height_scale, pixel_tolerances=[1,3,5,10]):
     """
@@ -114,18 +116,34 @@ class weighted_RMSE(nn.Module):
         else:
             return batch_loss
         
-class weighted_RMSE_tpo(nn.Module):
-    def __init__(self, weights, reduction='mean'):
-        super().__init__()
-        self.weights = weights
-        self.reduction = reduction
-        self.mseloss = nn.MSELoss(reduction='none')
+def log_avg_metrics(train_metrics, val_metrics, args):
+    mlflow.set_experiment(experiment_name=args.experiment_name)
+    with mlflow.start_run(run_name=args.run_name + "_avg"):
+        avg_val_metrics = {}
+        avg_train_metrics = {}
+        for epoch in range (args.num_epochs):
+            for k in train_metrics[0][epoch].keys():
+                avg_train_metrics[k] = sum_custom([train_metrics[i][epoch][k] for i in range(args.num_folds)])
+            mlflow.log_metric("train_loss", avg_train_metrics["train_loss"], step=epoch)
+            mlflow.log_metrics(avg_train_metrics['tr_p_acc_all'], step=epoch)
+            mlflow.log_metrics(avg_train_metrics['tr_p_error_all'], step=epoch)
+            if (epoch + 1) % args.val_interval == 0:	
+                for k in val_metrics[0][(epoch + 1) // args.val_interval - 1].keys():
+                    avg_val_metrics[k] = sum_custom([val_metrics[i][(epoch + 1) // args.val_interval - 1][k] for i in range(args.num_folds)])
+                mlflow.log_metric("val_loss", avg_val_metrics["val_loss"], step=epoch)
+                mlflow.log_metrics(avg_val_metrics['val_p_acc_all'], step=epoch)
+                mlflow.log_metrics(avg_val_metrics['val_p_error_all'], step=epoch)
 
-    def forward(self, inputs, targets):
-        batch_loss = self.mseloss(inputs, targets) * self.weights
-        if self.reduction == 'mean':
-            return torch.sqrt(torch.mean(batch_loss))
-        elif self.reduction == 'sum':
-            return torch.sqrt*(torch.sum(batch_loss))
-        else:
-            return batch_loss
+        with open(os.path.join(mlflow.get_artifact_uri(), "args.json"), 'w') as f:
+            json.dump(vars(args), f)
+        mlflow.log_artifact(os.path.join("./model", "BaselineEyeTrackingModel.py"))
+        mlflow.log_artifact(os.path.join("./model", "RecurrentVisionTransformer.py"))
+        mlflow.log_artifact(os.path.join("./model", "FastRecurrentTransformer.py"))
+    mlflow.end_run()
+
+def sum_custom(data):
+    if type(data[0]) == dict:
+        return {k: sum_custom([d[k] for d in data]) for k in data[0].keys()}
+    else:
+        return sum(data)/len(data)
+

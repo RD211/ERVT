@@ -1,3 +1,5 @@
+import random
+import numpy as np
 import torch
 import os
 from utils.metrics import p_acc, p_acc_wo_closed_eye, px_euclidean_dist
@@ -99,4 +101,21 @@ def top_k_checkpoints(args, artifact_uri):
         # delete the model checkpoint with the largest validation loss
         os.remove(os.path.join(artifact_uri, model_checkpoints[-1]))
 
+def set_deterministic(seed=42):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed) 
 
+    # torch.backends.cudnn.deterministic = True
+    # torch.backends.cudnn.benchmark = False
+    # torch.backends.cudnn.enabled = False
+    # os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8' # This was required to avoid a cuBLAS error because of CUDA 10.2
+    # torch.use_deterministic_algorithms(True)
+    # os.environ['PYTHONHASHSEED'] = str(seed)
+
+def seed_worker(worker_id):
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
