@@ -10,6 +10,7 @@ Email: wangzu@ethz.ch
 """
 
 import argparse, json, os, mlflow
+import copy
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
 import torch
@@ -33,34 +34,37 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler, args
     metrics_return_train = []
     metrics_return_val = []
     # Training loop
-    for epoch in range(args.num_epochs):
-        model, train_loss, metrics = train_epoch(model, train_loader, criterion, optimizer, args)
-        mlflow.log_metric("train_loss", train_loss, step=epoch)
-        mlflow.log_metrics(metrics['tr_p_acc_all'], step=epoch)
-        mlflow.log_metrics(metrics['tr_p_error_all'], step=epoch)
-        metrics["train_loss"] = train_loss
-        metrics_return_train.append(metrics)
+    try:
+        for epoch in range(args.num_epochs):
+            model, train_loss, metrics = train_epoch(model, train_loader, criterion, optimizer, args)
+            mlflow.log_metric("train_loss", train_loss, step=epoch)
+            mlflow.log_metrics(metrics['tr_p_acc_all'], step=epoch)
+            mlflow.log_metrics(metrics['tr_p_error_all'], step=epoch)
+            metrics["train_loss"] = train_loss
+            metrics_return_train.append(metrics)
 
-        if args.val_interval > 0 and (epoch + 1) % args.val_interval == 0:
-            val_loss, val_metrics = validate_epoch(model, val_loader, criterion, args)
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                # save the new best model to MLflow artifact with 3 decimal places of validation loss in the file name
-                torch.save(model.state_dict(), os.path.join(mlflow.get_artifact_uri(), \
-                            f"model_best_ep{epoch}_val_loss_{val_loss:.4f}.pth"))
+            if args.val_interval > 0 and (epoch + 1) % args.val_interval == 0:
+                val_loss, val_metrics = validate_epoch(model, val_loader, criterion, args)
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    # save the new best model to MLflow artifact with 3 decimal places of validation loss in the file name
+                    torch.save(model.state_dict(), os.path.join(mlflow.get_artifact_uri(), \
+                                f"model_best_ep{epoch}_val_loss_{val_loss:.4f}.pth"))
 
-                # DANGER Zone, this will delete files (checkpoints) in MLflow artifact
-                top_k_checkpoints(args, mlflow.get_artifact_uri())
+                    # DANGER Zone, this will delete files (checkpoints) in MLflow artifact
+                    top_k_checkpoints(args, mlflow.get_artifact_uri())
 
-            print(f"[Validation] at Epoch {epoch+1}/{args.num_epochs}: Val Loss: {val_loss:.4f}")
-            mlflow.log_metric("val_loss", val_loss, step=epoch)
-            mlflow.log_metrics(val_metrics['val_p_acc_all'], step=epoch)
-            mlflow.log_metrics(val_metrics['val_p_error_all'], step=epoch)
-            val_metrics["val_loss"] = val_loss
-            metrics_return_val.append(val_metrics)
-        # Print progress
-        print(f"Epoch {epoch+1}/{args.num_epochs}: Train Loss: {train_loss:.4f}")
-        scheduler.step()
+                print(f"[Validation] at Epoch {epoch+1}/{args.num_epochs}: Val Loss: {val_loss:.4f}")
+                mlflow.log_metric("val_loss", val_loss, step=epoch)
+                mlflow.log_metrics(val_metrics['val_p_acc_all'], step=epoch)
+                mlflow.log_metrics(val_metrics['val_p_error_all'], step=epoch)
+                val_metrics["val_loss"] = val_loss
+                metrics_return_val.append(val_metrics)
+            # Print progress
+            print(f"Epoch {epoch+1}/{args.num_epochs}: Train Loss: {train_loss:.4f}")
+            scheduler.step()
+    except Exception as e:
+        print("Exception occurred during training, terminating training process on this fold.", e)
 
     return model, metrics_return_train, metrics_return_val
 
@@ -103,8 +107,8 @@ def process_fold(fold, train_index, val_index, args, data):
         train_data = DiskCachedDataset(train_data, cache_path=f'./cached_dataset/train_fold{fold+1}', transforms=augmentation)
         val_data = DiskCachedDataset(val_data, cache_path=f'./cached_dataset/val_fold{fold+1}')
         
-        train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=int(os.cpu_count()-2)//4, pin_memory=True)
-        val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=int(os.cpu_count()-2)//4)
+        train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True)
+        val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=4)
             
         model, train_m, val_m = train(model, train_loader, val_loader, criterion, optimizer, scheduler, args)
             
@@ -178,9 +182,11 @@ def main(args):
         train_metrics = []
         val_metrics = []
         args_dict = args
-
+        
+        
         with ProcessPoolExecutor() as executor:
-            results = executor.map(process_fold, *zip(*[(fold, train_index, val_index, args_dict, data) for fold, (train_index, val_index) in enumerate(folds)]))
+            results = executor.map(process_fold, *zip(*[(fold, train_index, val_index, args_dict, copy.deepcopy(data)
+                                                         ) for fold, (train_index, val_index) in enumerate(folds)]))
 
         for train_m, val_m in results:
             train_metrics.append(train_m)
