@@ -10,6 +10,8 @@ Email: wangzu@ethz.ch
 """
 
 import argparse, json, os, mlflow
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -62,6 +64,55 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler, args
 
     return model, metrics_return_train, metrics_return_val
 
+
+def process_fold(fold, train_index, val_index, args, data):
+     # This needs to include necessary imports and definitions that are used inside this function
+    mlflow.set_tracking_uri(args.mlflow_path)
+    mlflow.set_experiment(experiment_name=args.experiment_name)
+    print(args.run_name + f"_fold{fold+1} / {args.num_folds}")
+    augmentation = RandomSpatialAugmentor(dataset_wh = (1, 1), augm_config=args.data_augmentation)
+    if args.loss == "mse":
+        criterion = nn.MSELoss()
+    elif args.loss == "weighted_mse":
+        criterion = weighted_MSELoss(weights=torch.tensor((args.sensor_width/args.sensor_height, 1)).to(args.device), \
+                                        reduction='mean')
+    elif args.loss == "weighted_rmse":
+        criterion = weighted_RMSE(weights=torch.tensor((args.sensor_width/args.sensor_height, 1)).to(args.device), \
+                                        reduction='mean')
+    else:
+        raise ValueError("Invalid loss name")
+
+    with mlflow.start_run(run_name=args.run_name + f"_fold{fold+1} / {args.num_folds}"):
+        # ====== MLflow logging ======
+        mlflow.log_artifact(__file__)
+        mlflow.log_params(vars(args))
+        with open(os.path.join(mlflow.get_artifact_uri(), "args.json"), 'w') as f:
+            json.dump(vars(args), f)
+        for file in os.listdir("./model"):
+            if file.endswith(".py"):
+                mlflow.log_artifact(os.path.join("./model", file))
+        # ============================
+                    
+        model = eval(args.architecture)(args).to(args.device)
+
+        optimizer = optim.Adam(model.parameters(), lr=args.lr)
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, args.gamma, -1, verbose=True)
+
+        train_data = torch.utils.data.Subset(data, train_index)
+        val_data = torch.utils.data.Subset(data, val_index)
+        train_data = DiskCachedDataset(train_data, cache_path=f'./cached_dataset/train_fold{fold+1}', transforms=augmentation)
+        val_data = DiskCachedDataset(val_data, cache_path=f'./cached_dataset/val_fold{fold+1}')
+        
+        train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=int(os.cpu_count()-2)//4, pin_memory=True)
+        val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=int(os.cpu_count()-2)//4)
+            
+        model, train_m, val_m = train(model, train_loader, val_loader, criterion, optimizer, scheduler, args)
+            
+        torch.save(model.state_dict(), os.path.join(mlflow.get_artifact_uri(), f"model_fold{fold+1}.pth"))
+        mlflow.end_run()
+            
+        return train_m, val_m
+        
 def main(args):
     # Load hyperparameters from JSON configuration file
     if args.config_file:
@@ -77,19 +128,6 @@ def main(args):
     
     set_deterministic(args.seed)
 
-    if args.loss == "mse":
-        criterion = nn.MSELoss()
-    elif args.loss == "weighted_mse":
-        criterion = weighted_MSELoss(weights=torch.tensor((args.sensor_width/args.sensor_height, 1)).to(args.device), \
-                                        reduction='mean')
-    elif args.loss == "weighted_rmse":
-        criterion = weighted_RMSE(weights=torch.tensor((args.sensor_width/args.sensor_height, 1)).to(args.device), \
-                                        reduction='mean')
-    else:
-        raise ValueError("Invalid loss name")
-
-    mlflow.set_tracking_uri(args.mlflow_path)
-    mlflow.set_experiment(experiment_name=args.experiment_name)
     factor = args.spatial_factor # spatial downsample factor
     temp_subsample_factor = args.temporal_subsample_factor # downsampling original 100Hz label to 20Hz
     # First we define the label transformations
@@ -131,55 +169,26 @@ def main(args):
     train_data = SlicedDataset(train_data_orig, train_slicer, transform=post_slicer_transform, metadata_path=f"./metadata/3et_train_tl_{args.train_length}_ts{args.train_stride}_ch{args.n_time_bins}")
     val_data = SlicedDataset(val_data_orig, val_slicer, transform=post_slicer_transform, metadata_path=f"./metadata/3et_val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}")
 
-    augmentation = RandomSpatialAugmentor(dataset_wh = (1, 1), augm_config=args.data_augmentation)
-
     data = torch.utils.data.ConcatDataset([train_data, val_data])
     
-    val_metrics = []
-    train_metrics = []
-    kf = KFold(n_splits=args.num_folds, shuffle=True, random_state=args.random_state)
+    def run_in_parallel(args, data):
+        multiprocessing.set_start_method('spawn', force=True)
+        kf = KFold(n_splits=args.num_folds, shuffle=True, random_state=args.random_state)
+        folds = list(kf.split(data))
+        train_metrics = []
+        val_metrics = []
+        args_dict = args
 
-    for fold, (train_index, val_index) in enumerate(kf.split(data)):
-        with mlflow.start_run(run_name=args.run_name + f"_fold{fold+1} / {args.num_folds}"):
-            # ====== MLflow logging ======
-            mlflow.log_artifact(__file__)
-            mlflow.log_params(vars(args))
-            with open(os.path.join(mlflow.get_artifact_uri(), "args.json"), 'w') as f:
-                json.dump(vars(args), f)
-            for file in os.listdir("./model"):
-                if file.endswith(".py"):
-                    mlflow.log_artifact(os.path.join("./model", file))
-            # ============================
-                    
-            model = eval(args.architecture)(args).to(args.device)
+        with ProcessPoolExecutor() as executor:
+            results = executor.map(process_fold, *zip(*[(fold, train_index, val_index, args_dict, data) for fold, (train_index, val_index) in enumerate(folds)]))
 
-            trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-            non_trainable_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
-            print("Model has:", trainable_params, "trainable parameters")
-            print("Model has:", non_trainable_params, "non-trainable parameters")
-
-            optimizer = optim.Adam(model.parameters(), lr=args.lr)
-            scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, args.gamma, -1, verbose = True)
-            print(f"Fold {fold+1}/{args.num_folds}")
-            
-            train_data = torch.utils.data.Subset(data, train_index)
-            val_data = torch.utils.data.Subset(data, val_index)
-            train_data = DiskCachedDataset(train_data, cache_path=f'./cached_dataset/train_tl_{args.train_length}_ts{args.train_stride}_ch{args.n_time_bins}_fold{fold+1}', transforms=augmentation)
-            val_data = DiskCachedDataset(val_data, cache_path=f'./cached_dataset/val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}_fold{fold+1}')
-        
-            train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, \
-                                    num_workers=int(os.cpu_count()-2), pin_memory=True, generator=(torch.Generator()).manual_seed(args.seed))
-            val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=False, \
-                                    num_workers=int(os.cpu_count()-2), generator=(torch.Generator()).manual_seed(args.seed))
-    
-            model, train_m, val_m = train(model, train_loader, val_loader, criterion, optimizer, scheduler, args)
-            val_metrics.append(val_m)
+        for train_m, val_m in results:
             train_metrics.append(train_m)
+            val_metrics.append(val_m)
 
-            torch.save(model.state_dict(), os.path.join(mlflow.get_artifact_uri(), f"model_fold{fold+1}.pth"))
-            mlflow.end_run()
-
-    log_avg_metrics(train_metrics, val_metrics, args)
+        log_avg_metrics(train_metrics, val_metrics, args)
+    multiprocessing.set_start_method('spawn', force=True)
+    run_in_parallel(args, data)
 
 
 

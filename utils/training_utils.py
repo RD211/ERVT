@@ -11,7 +11,6 @@ def train_epoch(model, train_loader, criterion, optimizer, args):
     total_p_error_all  = {f'error_all':0}  # averaged euclidean distance
     total_samples_all, total_sample_p_error_all  = 0, 0
 
-
     for inputs, targets in train_loader:
         optimizer.zero_grad()
         outputs = model(inputs.to(args.device))
