@@ -149,9 +149,11 @@ def main(args):
     # Assuming val_loader is defined and properly loaded
     for i, (voxel_grid, target) in tqdm.tqdm(enumerate(val_loader if args.set == "val" else train_loader)):
         voxel_grid = voxel_grid.to(args.device)
-        pred = model(voxel_grid).detach().cpu().numpy()[0]
+        pred = model(voxel_grid).detach().cpu().numpy()
+        pred = pred[0]
         voxel_grid_np = voxel_grid[0, :, :, :, :].cpu().numpy()
         voxel_grid_np = (voxel_grid_np - voxel_grid_np.min()) / (voxel_grid_np.max() - voxel_grid_np.min())  # Normalize
+        pred = pred.reshape(pred.shape[0], pred.shape[2])
         html_str = plot_voxel_grid_as_rgb_to_html(voxel_grid_np, f"Voxel grid {i}", pred, target[0][:,:2])
         html_doc += html_str
 
