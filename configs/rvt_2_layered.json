@@ -1,8 +1,8 @@
 {
   "device": "cuda:4",
-  "mlflow_path": "./../eye/mlruns",
+  "mlflow_path": "/space/mlica//mlruns",
   "experiment_name": "trial_experiment",
-  "data_dir": "./event_data",
+  "data_dir": "/space/mlica/event_data",
   "run_name": "trial_run",
   "architecture": "RVT",
   "expansion_ratio": 2,
