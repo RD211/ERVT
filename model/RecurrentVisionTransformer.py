@@ -197,8 +197,4 @@ class RVT(nn.Module):
 
         coordinates = torch.stack(outputs, dim=1)
 
-<<<<<<< HEAD
-        return coordinates
-=======
         return coordinates, lstm_states
->>>>>>> main
