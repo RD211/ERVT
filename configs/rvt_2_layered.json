@@ -10,7 +10,8 @@
   "mlp_gated": true,
   "gamma": 0.99,
   "mlp_bias": true,
-  "drop_prob": 0.0,
+  "drop_prob": 0.2,
+  "tbptt": 15,
   "stages": [
     {
       "kernel_size": 7,
@@ -28,7 +29,7 @@
     }
   ],
   "lr": 0.001,
-  "num_epochs": 200,
+  "num_epochs": 300,
   "batch_size": 8,
   "num_folds": 4,
   "random_state": 42,
