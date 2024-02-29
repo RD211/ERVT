@@ -1,8 +1,8 @@
 {
     "device": "cuda:0",
-    "mlflow_path": "./../eye/mlruns",
+    "mlflow_path": "/space/mlica/mlruns",
     "experiment_name": "debug",
-    "data_dir": "./event_data",
+    "data_dir": "/space/mlica/event_data",
     "architecture": "FRT",
     "expansion_ratio": 2,
     "mlp_act_layer": "gelu",

@@ -1,8 +1,11 @@
 __pycache__
 cached_dataset/
+metadata/
 mlruns
 trace.json
 submission.csv
 sample_submission.csv
 .DS_Store
 .swp
+metadata
+.nfs00000000035c44da00000621
