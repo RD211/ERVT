@@ -117,6 +117,7 @@ class weighted_RMSE(nn.Module):
             return batch_loss
         
 def log_avg_metrics(train_metrics, val_metrics, args):
+    mlflow.set_tracking_uri(args.mlflow_path)
     mlflow.set_experiment(experiment_name=args.experiment_name)
     with mlflow.start_run(run_name=args.run_name + "_avg"):
         avg_val_metrics = {}
@@ -134,7 +135,6 @@ def log_avg_metrics(train_metrics, val_metrics, args):
                 mlflow.log_metrics(avg_val_metrics['val_p_acc_all'], step=epoch)
                 mlflow.log_metrics(avg_val_metrics['val_p_error_all'], step=epoch)
 
-        # This fails on average
         with open(os.path.join(mlflow.get_artifact_uri(), "args.json"), 'w') as f:
             json.dump(vars(args), f)
         mlflow.log_artifact(os.path.join("./model", "BaselineEyeTrackingModel.py"))
