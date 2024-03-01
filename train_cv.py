@@ -26,10 +26,10 @@ from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
     TemporalSubsample, NormalizeLabel, SliceLongEventsToShort, \
     EventSlicesToVoxelGrid, SliceByTimeEventsTargets, RandomSpatialAugmentor
 import tonic.transforms as transforms
-from tonic import SlicedDataset, DiskCachedDataset
+from tonic import SlicedDataset, MemoryCachedDataset
 from sklearn.model_selection import KFold
 
-def train(model, train_loader, val_loader, criterion, optimizer, scheduler, args):
+def train(model, train_loader, val_loader, criterion, optimizer, scheduler, args, fold_num):
     best_val_loss = float("inf")
     metrics_return_train = []
     metrics_return_val = []
@@ -61,7 +61,7 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler, args
                 val_metrics["val_loss"] = val_loss
                 metrics_return_val.append(val_metrics)
             # Print progress
-            print(f"Epoch {epoch+1}/{args.num_epochs}: Train Loss: {train_loss:.4f}")
+            print(f"Epoch {epoch+1}/{args.num_epochs}: Train Loss: {train_loss:.4f} on fold {fold_num+1}/{args.num_folds}")
             scheduler.step()
     except Exception as e:
         print("Exception occurred during training, terminating training process on this fold.", e)
@@ -69,10 +69,40 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler, args
     return model, metrics_return_train, metrics_return_val
 
 
-def process_fold(fold, train_index, val_index, args, data):
+def process_fold(fold, train_index, val_index, args, data, temp_subsample_factor, factor):
      # This needs to include necessary imports and definitions that are used inside this function
     mlflow.set_tracking_uri(args.mlflow_path)
     mlflow.set_experiment(experiment_name=args.experiment_name)
+
+    
+    train_data_orig = torch.utils.data.Subset(data, train_index)
+    val_data_orig = torch.utils.data.Subset(data, val_index)
+
+    # Then we slice the event recordings into sub-sequences.
+    # The time-window is determined by the sequence length (train_length, val_length)
+    # and the temporal subsample factor.
+    slicing_time_window = args.train_length*int(10000/temp_subsample_factor) #microseconds
+    train_stride_time = int(10000/temp_subsample_factor*args.train_stride) #microseconds
+
+    train_slicer=SliceByTimeEventsTargets(slicing_time_window, overlap=slicing_time_window-train_stride_time, \
+                    seq_length=args.train_length, seq_stride=args.train_stride, include_incomplete=False)
+    # the validation set is sliced to non-overlapping sequences
+    val_slicer=SliceByTimeEventsTargets(slicing_time_window, overlap=0, \
+                    seq_length=args.val_length, seq_stride=args.val_stride, include_incomplete=False)
+
+    # After slicing the raw event recordings into sub-sequences,
+    # we make each subsequences into your favorite event representation,
+    # in this case event voxel-grid
+    post_slicer_transform = transforms.Compose([
+        SliceLongEventsToShort(time_window=int(10000/temp_subsample_factor), overlap=0, include_incomplete=True),
+        EventSlicesToVoxelGrid(sensor_size=(int(640*factor), int(480*factor), 2), \
+                                n_time_bins=args.n_time_bins, per_channel_normalize=args.voxel_grid_ch_normaization)
+    ])
+
+    # We use the Tonic SlicedDataset class to handle the collation of the sub-sequences into batches.
+    train_data = SlicedDataset(train_data_orig, train_slicer, transform=post_slicer_transform, metadata_path=f"./metadata/3et_train_tl_{fold}_{args.train_length}_ts{args.train_stride}_ch{args.n_time_bins}")
+    val_data = SlicedDataset(val_data_orig, val_slicer, transform=post_slicer_transform, metadata_path=f"./metadata/3et_val_vl_{fold}_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}")
+
     print(args.run_name + f"_fold{fold+1} / {args.num_folds}")
     augmentation = RandomSpatialAugmentor(dataset_wh = (1, 1), augm_config=args.data_augmentation)
     if args.loss == "mse":
@@ -85,6 +115,12 @@ def process_fold(fold, train_index, val_index, args, data):
                                         reduction='mean')
     else:
         raise ValueError("Invalid loss name")
+    
+    train_data = MemoryCachedDataset(train_data, transforms=augmentation)
+    val_data = MemoryCachedDataset(val_data)
+
+    train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
     with mlflow.start_run(run_name=args.run_name + f"_fold{fold+1} / {args.num_folds}"):
         # ====== MLflow logging ======
@@ -100,17 +136,9 @@ def process_fold(fold, train_index, val_index, args, data):
         model = eval(args.architecture)(args).to(args.device)
 
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, args.gamma, -1, verbose=True)
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, args.gamma, -1)
 
-        train_data = torch.utils.data.Subset(data, train_index)
-        val_data = torch.utils.data.Subset(data, val_index)
-        train_data = DiskCachedDataset(train_data, cache_path=f'./cached_dataset/train_fold{fold+1}', transforms=augmentation)
-        val_data = DiskCachedDataset(val_data, cache_path=f'./cached_dataset/val_fold{fold+1}')
-        
-        train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True)
-        val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=4)
-            
-        model, train_m, val_m = train(model, train_loader, val_loader, criterion, optimizer, scheduler, args)
+        model, train_m, val_m = train(model, train_loader, val_loader, criterion, optimizer, scheduler, args, fold)
             
         torch.save(model.state_dict(), os.path.join(mlflow.get_artifact_uri(), f"model_fold{fold+1}.pth"))
         mlflow.end_run()
@@ -148,32 +176,7 @@ def main(args):
                     transform=transforms.Downsample(spatial_factor=factor),
                     target_transform=label_transform)
 
-    # Then we slice the event recordings into sub-sequences.
-    # The time-window is determined by the sequence length (train_length, val_length)
-    # and the temporal subsample factor.
-    slicing_time_window = args.train_length*int(10000/temp_subsample_factor) #microseconds
-    train_stride_time = int(10000/temp_subsample_factor*args.train_stride) #microseconds
-
-    train_slicer=SliceByTimeEventsTargets(slicing_time_window, overlap=slicing_time_window-train_stride_time, \
-                    seq_length=args.train_length, seq_stride=args.train_stride, include_incomplete=False)
-    # the validation set is sliced to non-overlapping sequences
-    val_slicer=SliceByTimeEventsTargets(slicing_time_window, overlap=0, \
-                    seq_length=args.val_length, seq_stride=args.val_stride, include_incomplete=False)
-
-    # After slicing the raw event recordings into sub-sequences,
-    # we make each subsequences into your favorite event representation,
-    # in this case event voxel-grid
-    post_slicer_transform = transforms.Compose([
-        SliceLongEventsToShort(time_window=int(10000/temp_subsample_factor), overlap=0, include_incomplete=True),
-        EventSlicesToVoxelGrid(sensor_size=(int(640*factor), int(480*factor), 2), \
-                                n_time_bins=args.n_time_bins, per_channel_normalize=args.voxel_grid_ch_normaization)
-    ])
-
-    # We use the Tonic SlicedDataset class to handle the collation of the sub-sequences into batches.
-    train_data = SlicedDataset(train_data_orig, train_slicer, transform=post_slicer_transform, metadata_path=f"./metadata/3et_train_tl_{args.train_length}_ts{args.train_stride}_ch{args.n_time_bins}")
-    val_data = SlicedDataset(val_data_orig, val_slicer, transform=post_slicer_transform, metadata_path=f"./metadata/3et_val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}")
-
-    data = torch.utils.data.ConcatDataset([train_data, val_data])
+    data = torch.utils.data.ConcatDataset([train_data_orig, val_data_orig])
     
     def run_in_parallel(args, data):
         multiprocessing.set_start_method('spawn', force=True)
@@ -182,12 +185,9 @@ def main(args):
         train_metrics = []
         val_metrics = []
         args_dict = args
-        
-        
         with ProcessPoolExecutor() as executor:
-            results = executor.map(process_fold, *zip(*[(fold, train_index, val_index, args_dict, copy.deepcopy(data)
+            results = executor.map(process_fold, *zip(*[(fold, train_index, val_index, args_dict, copy.deepcopy(data), temp_subsample_factor, factor
                                                          ) for fold, (train_index, val_index) in enumerate(folds)]))
-
         for train_m, val_m in results:
             train_metrics.append(train_m)
             val_metrics.append(val_m)

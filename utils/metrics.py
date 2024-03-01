@@ -134,6 +134,7 @@ def log_avg_metrics(train_metrics, val_metrics, args):
                 mlflow.log_metrics(avg_val_metrics['val_p_acc_all'], step=epoch)
                 mlflow.log_metrics(avg_val_metrics['val_p_error_all'], step=epoch)
 
+        # This fails on average
         with open(os.path.join(mlflow.get_artifact_uri(), "args.json"), 'w') as f:
             json.dump(vars(args), f)
         mlflow.log_artifact(os.path.join("./model", "BaselineEyeTrackingModel.py"))

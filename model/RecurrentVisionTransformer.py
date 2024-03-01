@@ -36,67 +36,22 @@ class SelfAttentionCl(nn.Module):
         x = self.proj(x)
         return x
 
-class UnifiedBlockGridAttention(nn.Module):
-    def __init__(self, channels: int, partition_size: int, dim_head: int = 32, mode: str = 'block'):
+class FullSelfAttention(nn.Module):
+    def __init__(self, channels: int, partition_size: int, dim_head: int = 32):
         super().__init__()
-        assert mode in ['block', 'grid'], "Mode must be either 'block' or 'grid'."
 
         self.channels = channels
         self.partition_size = partition_size
-        self.mode = mode
         self.ln = nn.LayerNorm(channels)
         self.ls = LayerScale(channels)
         self.mhsa = SelfAttentionCl(dim=channels, dim_head=dim_head)
 
-    def partition(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Partitions the input tensor based on the selected mode (block or grid).
-        """
-        B, H, W, C = x.shape
-        if self.mode == 'block':
-            if H % self.partition_size != 0 or W % self.partition_size != 0:
-                raise ValueError(f"Input size must be divisible by the window size. Got: {H}x{W}, window size: {self.partition_size}")
-            shape = (B, H // self.partition_size, self.partition_size, W // self.partition_size, self.partition_size, C)
-            permute_order = (0, 1, 3, 2, 4, 5)
-        else:  # grid mode
-            if H % self.partition_size != 0 or W % self.partition_size != 0:
-                raise ValueError(f"Input size must be divisible by the grid size. Got: {H}x{W}, grid size: {self.partition_size}")
-            shape = (B, self.partition_size, H // self.partition_size, self.partition_size, W // self.partition_size, C)
-            permute_order = (0, 2, 4, 1, 3, 5)
-
-        x = x.view(shape)
-        windows = x.permute(permute_order).contiguous().view(-1, self.partition_size, self.partition_size, C)
-        return windows
-
-    def reverse_partition(self, windows: torch.Tensor, img_size: Tuple[int, int]) -> torch.Tensor:
-        """
-        Reverses the partitioning operation to reconstruct the original image shape.
-        """
-        H, W = img_size
-        C = windows.shape[-1]
-        if self.mode == 'block':
-            shape = (-1, H // self.partition_size, W // self.partition_size, self.partition_size, self.partition_size, C)
-            permute_order = (0, 1, 3, 2, 4, 5)
-        else:  # grid mode
-            shape = (-1, H // self.partition_size, W // self.partition_size, self.partition_size, self.partition_size, C)
-            permute_order = (0, 3, 1, 4, 2, 5)
-
-        x = windows.view(shape)
-        x = x.permute(permute_order).contiguous().view(-1, H, W, C)
-        return x
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Applies self-attention based on the selected partitioning mode (block or grid).
-        """
         B, H, W, C = x.size()
 
         x = self.ln(x)  # Apply layer normalization
-        x = self.partition(x)  # Partition based on mode
-
-        attn_output = self.mhsa(x)  # Apply self-attention
+        attn_output = self.mhsa(x.view(B,H*W,C)).view(B,H,W,C)  # Apply self-attention
         attn_output = self.ls(attn_output)  # Scale the attention output
-        attn_output = self.reverse_partition(attn_output, (H, W))  # Reverse partitioning
 
         return attn_output
 
@@ -105,17 +60,11 @@ class RVTBlock(nn.Module):
         super().__init__()
         args = Namespace(**args, **kwargs)
         self.conv = nn.Conv2d(args.input_channels, args.output_channels, kernel_size=args.kernel_size, stride=args.stride, padding=args.kernel_size//2)
-        self.block_sa = UnifiedBlockGridAttention(channels=args.output_channels, partition_size=args.partition_size, dim_head=args.dim_head, mode='block')
+        self.fsa = FullSelfAttention(channels=args.output_channels, partition_size=args.partition_size, dim_head=args.dim_head)
 
         self.ln = nn.LayerNorm(args.output_channels)
 
         self.mlpb = MLP(dim=args.output_channels, channel_last=True, expansion_ratio=args.expansion_ratio, act_layer=args.mlp_act_layer, gated = args.mlp_gated, bias = args.mlp_bias, drop_prob=args.drop_prob)
-        self.mlpg = MLP(dim=args.output_channels, channel_last=True, expansion_ratio=args.expansion_ratio, act_layer=args.mlp_act_layer, gated = args.mlp_gated, bias = args.mlp_bias, drop_prob=args.drop_prob)
-
-        self.grid_sa = UnifiedBlockGridAttention(channels=args.output_channels, partition_size=args.partition_size, dim_head=args.dim_head, mode='grid')
-
-        self.ls1 = LayerScale(args.output_channels)
-        self.ls2 = LayerScale(args.output_channels)
 
         self.lstm = DWSConvLSTM2d(dim=args.output_channels)
 
@@ -124,18 +73,12 @@ class RVTBlock(nn.Module):
         x_conv = x_conv.permute(0, 2, 3, 1)
         x_conv = self.ln(x_conv)
 
-        x_bsa = self.block_sa(x_conv)
+        x_bsa = self.fsa(x_conv)
         x_bsa = x_bsa + x_conv
         x_bsa = self.ln(x_bsa)
         x_bsa = self.mlpb(x_bsa)
 
-
-        x_gsa = self.grid_sa(x_bsa)
-        x_gsa = x_gsa + x_bsa
-        x_gsa = self.ln(x_gsa)
-        x_gsa = self.mlpg(x_gsa)
-
-        x_unflattened = x_gsa.permute(0, 3, 1, 2)
+        x_unflattened = x_bsa.permute(0, 3, 1, 2)
         x_unflattened, c = self.lstm(x_unflattened, (c, h))
 
         return x_unflattened, c
