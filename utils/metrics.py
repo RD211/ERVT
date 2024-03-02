@@ -117,6 +117,7 @@ class weighted_RMSE(nn.Module):
             return batch_loss
         
 def log_avg_metrics(train_metrics, val_metrics, args):
+    mlflow.set_tracking_uri(args.mlflow_path)
     mlflow.set_experiment(experiment_name=args.experiment_name)
     with mlflow.start_run(run_name=args.run_name + "_avg"):
         avg_val_metrics = {}

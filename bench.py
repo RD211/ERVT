@@ -19,16 +19,24 @@ def main(args):
     else:
         raise ValueError("Please provide a JSON configuration file.")
     model = eval(args.architecture)(args).to(args.device)
-    factor = args.spatial_factor    
 
+    # Create a dummy input tensor
+    factor = args.spatial_factor    
     data = torch.ones((1,1,3,int(640*factor), int(480*factor)))
     data = data.to(args.device)
 
     # print model summary
     summary(model, input_data=data, verbose=2)
-    for i in range(1000):
-        with CudaTimer(device=data.device, timer_name="model_inference"):
-            output = model(data)
+
+    torch.backends.cuda.enable_mem_efficient_sdp(False)
+    torch.backends.cuda.enable_flash_sdp(False)
+    torch.set_float32_matmul_precision('high')
+    model.eval()
+    model = torch.compile(model)
+    with torch.no_grad():
+        for _ in range(1000):
+            with CudaTimer(device=data.device, timer_name="model_inference"):
+                output = model(data)
 
 if __name__ == "__main__":
     import argparse
