@@ -44,6 +44,7 @@
   "n_time_bins": 3,
   "voxel_grid_ch_normaization": false,
   "loss": "weighted_rmse",
+  "in_channels": 3,
   
   "data_augmentation": {
       "prob_hflip": 0.5,

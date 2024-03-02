@@ -102,7 +102,7 @@ class RVT(nn.Module):
         self.stages = nn.ModuleList([
             RVTBlock(
                 replace_act_layer({**(args.__dict__), **args.stages[i]}),
-                input_channels=args.stages[i-1]["output_channels"] if i > 0 else args.n_time_bins,
+                input_channels=args.stages[i-1]["output_channels"] if i > 0 else args.in_channels,
             )
             for i in range(len(args.stages))
         ])

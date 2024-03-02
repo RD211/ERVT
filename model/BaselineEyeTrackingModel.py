@@ -8,7 +8,7 @@ class CNN_GRU(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.args = args
-        self.conv1 = nn.Conv2d(args.n_time_bins, 32, kernel_size=3, stride=1, padding=1)
+        self.conv1 = nn.Conv2d(args.in_channels, 32, kernel_size=3, stride=1, padding=1)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
         self.conv3 = nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1)
         self.pool = nn.MaxPool2d(kernel_size=3, stride=2)

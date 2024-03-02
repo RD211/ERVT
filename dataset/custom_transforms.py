@@ -135,7 +135,107 @@ class EventSlicesToVoxelGrid:
 
                     voxel_grid[c][non_zero_entries[c]] = (voxel_grid[c][non_zero_entries[c]] - mean_c) / (std_c + 1e-10)
             voxel_grids.append(voxel_grid)
+        print(np.array(voxel_grids).astype(np.float32).shape)
         return np.array(voxel_grids).astype(np.float32)
+
+class EventSlicesToSpikeTensor:
+    def __init__(self, sensor_size, n_time_bins, per_channel_normalize):
+        """
+        Initialize the transformation.
+
+        Args:
+        - sensor_size (tuple): The size of the sensor.
+        - n_time_bins (int): The number of time bins.
+        """
+
+        self.sensor_size = sensor_size
+        self.n_time_bins = n_time_bins
+        self.per_channel_normalization = per_channel_normalize
+        self.dim = (self.n_time_bins, *self.sensor_size)
+
+    def __call__(self, event_slices):
+        """
+        Apply the transformation to the given event slices.
+
+        Args:
+        - event_slices (Tensor): The input event slices.
+
+        Returns:
+        - Tensor: A batched tensor of voxel grids.
+        """
+        event_tensors = []
+        for event_slice in event_slices:
+            spike = self.to_event_spike(event_slice)
+            event_tensors.append(spike)
+        print(np.array(event_tensors).astype(np.float32).shape)
+        return np.array(event_tensors).astype(np.float32)
+
+
+
+    def to_event_spike(self, events):
+        assert "x" and "y" and "t" and "p" in events.dtype.names
+        event_spike = np.zeros((3, self.n_time_bins, self.sensor_size[1], self.sensor_size[0]), np.float32).ravel()
+        # normalize the event timestamps so that they lie between 0 and n_time_bins
+        ts = (
+            self.n_time_bins * (events["t"].astype(float) - np.min(events["t"])) / (np.max(events["t"]).astype(float) - np.min(events["t"]))
+        )
+        ts[ts == self.n_time_bins] = self.n_time_bins - 1
+
+        xs = events["x"].astype(int)
+        ys = events["y"].astype(int)
+        pols = events["p"]
+
+
+        pols[pols == 0] = -1 
+        assert np.all((pols == -1) | (pols == 1))
+
+        
+        tis = ts.astype(int)
+
+        assert np.all(tis < self.n_time_bins)
+        assert np.all(tis >= 0)
+
+        pos_indices = np.where(pols == 1)
+        neg_indices = np.where(pols == -1)
+
+        np.add.at(
+            event_spike,
+            xs[pos_indices] + ys[pos_indices] * self.sensor_size[0] + tis[pos_indices] * self.sensor_size[0] * self.sensor_size[1]
+            + 0 * self.n_time_bins * self.sensor_size[0] * self.sensor_size[1],
+            pols[pos_indices]
+        )
+
+        np.add.at(
+            event_spike,
+            xs[neg_indices] + ys[neg_indices] * self.sensor_size[0] + tis[neg_indices] * self.sensor_size[0] * self.sensor_size[1]
+            + 1 * self.n_time_bins * self.sensor_size[0] * self.sensor_size[1],
+            pols[neg_indices]
+        )
+        np.add.at(
+            event_spike,
+            xs[pos_indices] + ys[pos_indices] * self.sensor_size[0] + tis[pos_indices] * self.sensor_size[0] * self.sensor_size[1]
+            + 2 * self.n_time_bins * self.sensor_size[0] * self.sensor_size[1],
+            pols[pos_indices]
+        )
+        np.add.at(
+            event_spike,
+            xs[neg_indices] + ys[neg_indices] * self.sensor_size[0] + tis[neg_indices] * self.sensor_size[0] * self.sensor_size[1]
+            + 2 * self.n_time_bins * self.sensor_size[0] * self.sensor_size[1],
+            pols[neg_indices]
+        )
+    
+
+        event_spike = np.reshape(
+            event_spike, (3 * self.n_time_bins, self.sensor_size[1], self.sensor_size[0])
+        )
+        print("bbbbbbbbbbbbbbbbb")
+        print(event_spike.shape)
+        return event_spike
+
+
+
+
+
 
 class SplitSequence:
     def __init__(self, sub_seq_length, stride):
