@@ -413,13 +413,10 @@ class RandomSpatialAugmentor:
         self.randomize_augmentation()
         if self.augm_state.apply_h_flip:
             return self.h_flip(input), self.h_flip(target)
-
         if self.augm_state.apply_noise:
             input = self.add_random_noise(input)
-
         if self.augm_state.apply_time_reversal:
             input, target = input[::-1].copy(), target[::-1].copy()
-
         if self.augm_state.apply_random_time_shift:
             input, target = self.random_time_shift(input, target)
         return (input, target)
