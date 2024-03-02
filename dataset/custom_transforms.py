@@ -174,37 +174,62 @@ class EventSlicesToSpikeTensor:
 
     def to_event_spike(self, events):
         assert "x" and "y" and "t" and "p" in events.dtype.names
-        event_spike = np.zeros((2, self.n_time_bins, self.sensor_size[1], self.sensor_size[0]), np.float32).ravel()
-
+        event_spike = np.zeros((3, self.n_time_bins, self.sensor_size[1], self.sensor_size[0]), np.float32).ravel()
         # normalize the event timestamps so that they lie between 0 and n_time_bins
         ts = (
-            self.n_time_bins * (events["t"].astype(float) - events["t"][0]) / (events["t"][-1] - events["t"][0])
+            self.n_time_bins * (events["t"].astype(float) - np.min(events["t"])) / (np.max(events["t"]).astype(float) - np.min(events["t"]))
         )
+        ts[ts == self.n_time_bins] = self.n_time_bins - 1
 
         xs = events["x"].astype(int)
         ys = events["y"].astype(int)
         pols = events["p"]
 
-        # save positions as 0 and 1 polarity
-        pos = pols
-        pos[pos == -1] = 0
-        pols[pols == 0] = -1 # polarity should be +1/-1
 
+        pols[pols == 0] = -1 
+        assert np.all((pols == -1) | (pols == 1))
+
+        
         tis = ts.astype(int)
 
-        valid_indices = tis < self.n_time_bins
+        assert np.all(tis < self.n_time_bins)
+        assert np.all(tis >= 0)
+
+        pos_indices = np.where(pols == 1)
+        neg_indices = np.where(pols == -1)
 
         np.add.at(
             event_spike,
-            xs[valid_indices] + ys[valid_indices] * self.sensor_size[0] + tis[valid_indices] * self.sensor_size[0] * self.sensor_size[1]
-            + pos[valid_indices] * self.n_time_bins * self.sensor_size[0] * self.sensor_size[1],
-            pols[valid_indices]
+            xs[pos_indices] + ys[pos_indices] * self.sensor_size[0] + tis[pos_indices] * self.sensor_size[0] * self.sensor_size[1]
+            + 0 * self.n_time_bins * self.sensor_size[0] * self.sensor_size[1],
+            pols[pos_indices]
         )
+
+        np.add.at(
+            event_spike,
+            xs[neg_indices] + ys[neg_indices] * self.sensor_size[0] + tis[neg_indices] * self.sensor_size[0] * self.sensor_size[1]
+            + 1 * self.n_time_bins * self.sensor_size[0] * self.sensor_size[1],
+            pols[neg_indices]
+        )
+        np.add.at(
+            event_spike,
+            xs[pos_indices] + ys[pos_indices] * self.sensor_size[0] + tis[pos_indices] * self.sensor_size[0] * self.sensor_size[1]
+            + 2 * self.n_time_bins * self.sensor_size[0] * self.sensor_size[1],
+            pols[pos_indices]
+        )
+        np.add.at(
+            event_spike,
+            xs[neg_indices] + ys[neg_indices] * self.sensor_size[0] + tis[neg_indices] * self.sensor_size[0] * self.sensor_size[1]
+            + 2 * self.n_time_bins * self.sensor_size[0] * self.sensor_size[1],
+            pols[neg_indices]
+        )
+    
 
         event_spike = np.reshape(
-            event_spike, (2 * self.n_time_bins, self.sensor_size[1], self.sensor_size[0])
+            event_spike, (3 * self.n_time_bins, self.sensor_size[1], self.sensor_size[0])
         )
-
+        print("bbbbbbbbbbbbbbbbb")
+        print(event_spike.shape)
         return event_spike
 
 

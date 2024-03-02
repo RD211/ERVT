@@ -148,7 +148,7 @@ def main(args):
         post_slicer_transform = transforms.Compose([
             SliceLongEventsToShort(time_window=int(10000/temp_subsample_factor), overlap=0, include_incomplete=True),
             EventSlicesToSpikeTensor(sensor_size=(int(640*factor), int(480*factor), 2), \
-                                    n_time_bins=args.n_time_bins, per_channel_normalization=args.voxel_grid_ch_normaization)
+                                    n_time_bins=args.n_time_bins, per_channel_normalize=args.voxel_grid_ch_normaization)
         ])
 
         # We use the Tonic SlicedDataset class to handle the collation of the sub-sequences into batches.

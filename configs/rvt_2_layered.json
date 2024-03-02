@@ -31,7 +31,7 @@
     "lr": 0.001,
     "num_epochs": 300,
     "batch_size": 8,
-    "num_folds": 4,
+    "num_folds": 2,
     "random_state": 42,
     "seed": 42,	
     "spatial_factor": 0.125,
@@ -51,7 +51,7 @@
     "train_length": 30,
     "val_length": 30,
     "n_time_bins": 3,
-    "in_channels": 6,
+    "in_channels": 9,
     "voxel_grid_ch_normaization": false,
     "loss": "weighted_rmse",
     "data_augmentation": {
