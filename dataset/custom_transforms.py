@@ -135,7 +135,6 @@ class EventSlicesToVoxelGrid:
 
                     voxel_grid[c][non_zero_entries[c]] = (voxel_grid[c][non_zero_entries[c]] - mean_c) / (std_c + 1e-10)
             voxel_grids.append(voxel_grid)
-        print(np.array(voxel_grids).astype(np.float32).shape)
         return np.array(voxel_grids).astype(np.float32)
 
 class EventSlicesToSpikeTensor:
@@ -167,7 +166,6 @@ class EventSlicesToSpikeTensor:
         for event_slice in event_slices:
             spike = self.to_event_spike(event_slice)
             event_tensors.append(spike)
-        print(np.array(event_tensors).astype(np.float32).shape)
         return np.array(event_tensors).astype(np.float32)
 
 
@@ -228,8 +226,7 @@ class EventSlicesToSpikeTensor:
         event_spike = np.reshape(
             event_spike, (3 * self.n_time_bins, self.sensor_size[1], self.sensor_size[0])
         )
-        print("bbbbbbbbbbbbbbbbb")
-        print(event_spike.shape)
+
         return event_spike
 
 

@@ -42,14 +42,12 @@ class FullSelfAttention(nn.Module):
 
         self.channels = channels
         self.partition_size = partition_size
-        self.ln = nn.LayerNorm(channels)
         self.ls = LayerScale(channels)
         self.mhsa = SelfAttentionCl(dim=channels, dim_head=dim_head)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, H, W, C = x.size()
 
-        x = self.ln(x)  # Apply layer normalization
         attn_output = self.mhsa(x.view(B,H*W,C)).view(B,H,W,C)  # Apply self-attention
         attn_output = self.ls(attn_output)  # Scale the attention output
 
@@ -62,7 +60,8 @@ class RVTBlock(nn.Module):
         self.conv = nn.Conv2d(args.input_channels, args.output_channels, kernel_size=args.kernel_size, stride=args.stride, padding=args.kernel_size//2)
         self.fsa = FullSelfAttention(channels=args.output_channels, partition_size=args.partition_size, dim_head=args.dim_head)
 
-        self.ln = nn.LayerNorm(args.output_channels)
+        self.ln1= nn.LayerNorm(args.output_channels)
+        self.ln2= nn.LayerNorm(args.output_channels)
 
         self.mlpb = MLP(dim=args.output_channels, channel_last=True, expansion_ratio=args.expansion_ratio, act_layer=args.mlp_act_layer, gated = args.mlp_gated, bias = args.mlp_bias, drop_prob=args.drop_prob)
 
@@ -71,15 +70,15 @@ class RVTBlock(nn.Module):
     def forward(self, x: torch.Tensor, h: Optional[torch.Tensor], c: Optional[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         x_conv = self.conv(x)
         x_conv = x_conv.permute(0, 2, 3, 1)
-        x_conv = self.ln(x_conv)
+        x_conv = self.ln1(x_conv)
 
         x_bsa = self.fsa(x_conv)
         x_bsa = x_bsa + x_conv
-        x_bsa = self.ln(x_bsa)
+        x_bsa = self.ln2(x_bsa)
         x_bsa = self.mlpb(x_bsa)
 
         x_unflattened = x_bsa.permute(0, 3, 1, 2)
-        x_unflattened, c = self.lstm(x_unflattened, (c, h))
+        x_unflattened, c = self.lstm(x_unflattened, (h, c))
 
         return x_unflattened, c
 
@@ -98,7 +97,6 @@ class RVT(nn.Module):
         def replace_act_layer(args):
             args["mlp_act_layer"] = act_layer_to_activation[args["mlp_act_layer"]]
             return args
-
         self.stages = nn.ModuleList([
             RVTBlock(
                 replace_act_layer({**(args.__dict__), **args.stages[i]}),
@@ -128,7 +126,7 @@ class RVT(nn.Module):
                 xt, c = stage(xt, lstm_state[0], lstm_state[1])
 
                 # We save it for the next time step
-                lstm_states[i] = (c, xt)
+                lstm_states[i] = (xt, c)
 
 
             # Flatten the tensor

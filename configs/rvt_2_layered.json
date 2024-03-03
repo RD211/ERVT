@@ -1,5 +1,5 @@
 {
-    "device": "cuda:4",
+    "device": "cuda:6",
     "mlflow_path": "/space/mlica/mlruns",
     "experiment_name": "trial_experiment",
     "data_dir": "/space/mlica/event_data",
@@ -31,7 +31,7 @@
     "lr": 0.001,
     "num_epochs": 300,
     "batch_size": 8,
-    "num_folds": 2,
+    "num_folds": 5,
     "random_state": 42,
     "seed": 42,	
     "spatial_factor": 0.125,
@@ -50,8 +50,8 @@
     "val_stride": 30,
     "train_length": 30,
     "val_length": 30,
-    "n_time_bins": 3,
     "in_channels": 9,
+    "n_time_bins": 3,
     "voxel_grid_ch_normaization": false,
     "loss": "weighted_rmse",
     "data_augmentation": {
