@@ -185,7 +185,7 @@ def main(args):
         train_metrics = []
         val_metrics = []
         args_dict = args
-        with ProcessPoolExecutor() as executor:
+        with ProcessPoolExecutor(max_workers=1) as executor:
             results = executor.map(process_fold, *zip(*[(fold, train_index, val_index, args_dict, copy.deepcopy(data), temp_subsample_factor, factor
                                                          ) for fold, (train_index, val_index) in enumerate(folds)]))
         for train_m, val_m in results:

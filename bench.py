@@ -2,6 +2,7 @@ import argparse, json, os
 import torch
 from model.BaselineEyeTrackingModel import CNN_GRU
 from model.RecurrentVisionTransformer import RVT
+from model.Other import RVT2
 from model.FastRecurrentTransformer import FRT
 from utils.timer import CudaTimer
 from torchinfo import summary
@@ -22,7 +23,7 @@ def main(args):
 
     # Create a dummy input tensor
     factor = args.spatial_factor    
-    data = torch.ones((1,1,3,int(640*factor), int(480*factor)))
+    data = torch.ones((1,1,9,int(640*factor), int(480*factor)))
     data = data.to(args.device)
 
     # print model summary

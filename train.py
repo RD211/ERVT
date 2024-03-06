@@ -16,6 +16,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from model.BaselineEyeTrackingModel import CNN_GRU
 from model.RecurrentVisionTransformer import RVT
+from model.Other import RVT2
 from model.FastRecurrentTransformer import FRT
 from utils.training_utils import train_epoch, validate_epoch, top_k_checkpoints
 from utils.metrics import weighted_MSELoss, weighted_RMSE

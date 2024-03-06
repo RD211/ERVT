@@ -42,41 +42,37 @@ class FastAttention(nn.Module):
         self.norm_layer = norm_layer
         self.dim = in_chan
         # mid_chn = int(in_chan/2)
-        self.w_qs = ConvBNReLU(in_chan, in_chan, ks=1, stride=1, padding=0, norm_layer=norm_layer, activation='none')
-
-        self.w_ks = ConvBNReLU(in_chan, in_chan, ks=1, stride=1, padding=0, norm_layer=norm_layer, activation='none')
-
-        self.w_vs = ConvBNReLU(in_chan, in_chan, ks=1, stride=1, padding=0, norm_layer=norm_layer)
-
-        self.latlayer3 = ConvBNReLU(in_chan, in_chan, ks=1, stride=1, padding=0, norm_layer=norm_layer)
+        self.qkv = nn.Linear(in_chan, in_chan * 3, bias=True)
 
         self.init_weight()
 
     def forward(self, feat):
         # Expect shape N x C x H x W
-        query = self.w_qs(feat)
-        key   = self.w_ks(feat)
-        value = self.w_vs(feat)
+        B, C, H, W = feat.size()
 
+        # permute
+        feat = feat.permute((0, 2, 3, 1))
+        
+        query, key, value = self.qkv(feat).view(B, -1, 1, self.dim * 3).transpose(1, 2).chunk(3, dim=3)
+        
+        feat = feat.permute((0, 3, 1, 2))
+        query = query.permute((0, 3, 1, 2))
+        key = key.permute((0, 3, 1, 2))
+        value = value.permute((0, 3, 1, 2))
         N,C,H,W = feat.size()
 
-        query_ = query.view(N,self.dim,-1).permute(0, 2, 1)
-        query = F.normalize(query_, p=2, dim=2, eps=1e-12)
+        query = query.view(N,self.dim,-1).permute(0, 2, 1)
+        query = F.normalize(query, p=2, dim=2, eps=1e-12)
 
-        key_   = key.view(N,self.dim,-1)
-        key   = F.normalize(key_, p=2, dim=1, eps=1e-12)
+        key   = key.view(N,self.dim,-1)
+        key   = F.normalize(key, p=2, dim=1, eps=1e-12)
 
         value = value.view(N,C,-1).permute(0, 2, 1)
 
-        f = torch.matmul(key, value)
-        y = torch.matmul(query, f)
-        y = y.permute(0, 2, 1).contiguous()
+        y = (query@(key @ value)).permute(0, 2, 1)
 
         y = y.view(N, C, H, W)
-        W_y = self.latlayer3(y)
-        p_feat = W_y + feat
-
-        return p_feat
+        return y
 
     def init_weight(self):
         for ly in self.children():
