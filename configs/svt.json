@@ -1,10 +1,10 @@
 {
-    "device": "cuda:6",
+    "device": "cuda:3",
     "mlflow_path": "/space/mlica/mlruns",
     "experiment_name": "trial_experiment",
     "data_dir": "/space/mlica/event_data",
     "run_name": "trial_run",
-    "architecture": "RVT",
+    "architecture": "SVT",
     "expansion_ratio": 2,
     "mlp_act_layer": "gelu",
     "mlp_gated": true,
