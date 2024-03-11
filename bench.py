@@ -2,6 +2,7 @@ import argparse, json, os
 import torch
 from model.BaselineEyeTrackingModel import CNN_GRU
 from model.RecurrentVisionTransformer import RVT
+from model.SimpleVisionTransformer import SVT
 from model.FastRecurrentTransformer import FRT
 from utils.timer import CudaTimer
 from torchinfo import summary
@@ -32,7 +33,7 @@ def main(args):
     torch.backends.cuda.enable_flash_sdp(False)
     torch.set_float32_matmul_precision('high')
     model.eval()
-    model = torch.compile(model)
+    # model = torch.compile(model)
     with torch.no_grad():
         for _ in range(1000):
             with CudaTimer(device=data.device, timer_name="model_inference"):

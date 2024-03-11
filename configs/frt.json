@@ -1,8 +1,8 @@
 {
-  "device": "cuda:0",
-  "mlflow_path": "./../eye/mlruns",
+  "device": "cuda:3",
+  "mlflow_path": "/space/mlica/mlruns",
   "experiment_name": "trial_experiment",
-  "data_dir": "./event_data",
+  "data_dir": "/space/mlica/event_data",
   "run_name": "trial_run",
   "architecture": "FRT",
   "expansion_ratio": 2,
@@ -44,7 +44,7 @@
   "n_time_bins": 3,
   "voxel_grid_ch_normaization": false,
   "loss": "weighted_rmse",
-  "in_channels": 3,
+  "in_channels": 9,
   
   "data_augmentation": {
       "prob_hflip": 0.5,

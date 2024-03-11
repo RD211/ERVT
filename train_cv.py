@@ -19,12 +19,13 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from model.BaselineEyeTrackingModel import CNN_GRU
 from model.RecurrentVisionTransformer import RVT
+from model.SimpleVisionTransformer import SVT
 from model.FastRecurrentTransformer import FRT
 from utils.training_utils import set_deterministic, train_epoch, validate_epoch, top_k_checkpoints
 from utils.metrics import log_avg_metrics, weighted_MSELoss, weighted_RMSE
 from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
     TemporalSubsample, NormalizeLabel, SliceLongEventsToShort, \
-    EventSlicesToVoxelGrid, SliceByTimeEventsTargets, RandomSpatialAugmentor
+    EventSlicesToVoxelGrid, SliceByTimeEventsTargets, RandomSpatialAugmentor, EventSlicesToSpikeTensor
 import tonic.transforms as transforms
 from tonic import SlicedDataset, MemoryCachedDataset
 from sklearn.model_selection import KFold
@@ -119,8 +120,8 @@ def process_fold(fold, train_index, val_index, args, data, temp_subsample_factor
     train_data = MemoryCachedDataset(train_data, transforms=augmentation)
     val_data = MemoryCachedDataset(val_data)
 
-    train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True)
-    val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True)
+    train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=8, pin_memory=True)
+    val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=8, pin_memory=True)
 
     with mlflow.start_run(run_name=args.run_name + f"_fold{fold+1} / {args.num_folds}"):
         # ====== MLflow logging ======
