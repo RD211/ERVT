@@ -4,6 +4,7 @@ from model.BaselineEyeTrackingModel import CNN_GRU
 from model.RecurrentVisionTransformer import RVT
 from model.SimpleVisionTransformer import SVT
 from model.FastRecurrentTransformer import FRT
+from model.EventTransformer import EVT
 from utils.timer import CudaTimer
 from torchinfo import summary
 
