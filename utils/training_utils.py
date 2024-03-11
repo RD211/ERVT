@@ -43,7 +43,7 @@ def train_epoch(model, train_loader, criterion, optimizer, args):
             # avoid passing gradients further, detach the hidden states from the computational graph
             # NOTE: hidden is considered to be a list (corresponding to multiple stages)
             for i in range(len(hidden)):
-                hidden[i] = (hidden[i][0].detach(), hidden[i][1].detach())
+                hidden[i] = hidden[i].detach()
 
         outputs = torch.cat(acc_outputs, dim=1).detach().cpu() # concatenate over the time dimension
         total_loss += seq_loss / len(chuncks) # track the whole sequence loss

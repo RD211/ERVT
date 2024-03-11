@@ -17,6 +17,7 @@ from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
 import tonic.transforms as transforms
 from tonic import SlicedDataset, DiskCachedDataset
 from model.RecurrentVisionTransformer import RVT
+from model.SimpleVisionTransformer import SVT
 from model.FastRecurrentTransformer import FRT
 import torch
 from torch.profiler import profile, record_function, ProfilerActivity
@@ -64,7 +65,7 @@ def main(args):
 
     post_slicer_transform = transforms.Compose([
         SliceLongEventsToShort(time_window=int(10000/temp_subsample_factor), overlap=0, include_incomplete=True),
-        EventSlicesToSpikeTensor(sensor_size=(int(640*factor), int(480*factor), 2), \
+        EventSlicesToVoxelGrid(sensor_size=(int(640*factor), int(480*factor), 2), \
                                     n_time_bins=args.n_time_bins, per_channel_normalize=args.voxel_grid_ch_normaization)
     ])
 

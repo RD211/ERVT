@@ -24,7 +24,7 @@ from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
     TemporalSubsample, NormalizeLabel, SliceLongEventsToShort, \
     EventSlicesToVoxelGrid, SliceByTimeEventsTargets, RandomSpatialAugmentor, EventSlicesToSpikeTensor
 import tonic.transforms as transforms
-from tonic import SlicedDataset, DiskCachedDataset
+from tonic import SlicedDataset, MemoryCachedDataset
 
 def train(model, train_loader, val_loader, criterion, optimizer, scheduler, args):
     best_val_loss = float("inf")
@@ -148,7 +148,7 @@ def main(args):
         # in this case event voxel-grid
         post_slicer_transform = transforms.Compose([
             SliceLongEventsToShort(time_window=int(10000/temp_subsample_factor), overlap=0, include_incomplete=True),
-            EventSlicesToSpikeTensor(sensor_size=(int(640*factor), int(480*factor), 2), \
+            EventSlicesToVoxelGrid(sensor_size=(int(640*factor), int(480*factor), 2), \
                                     n_time_bins=args.n_time_bins, per_channel_normalize=args.voxel_grid_ch_normaization)
         ])
 
@@ -159,8 +159,8 @@ def main(args):
         augmentation = RandomSpatialAugmentor(dataset_wh = (1, 1), augm_config=args.data_augmentation)
 
         # cache the dataset to disk to speed up training. The first epoch will be slow, but the following epochs will be fast.
-        train_data = DiskCachedDataset(train_data, cache_path=f'./cached_dataset/train_tl_{args.train_length}_ts{args.train_stride}_ch{args.n_time_bins}', transforms=augmentation)
-        val_data = DiskCachedDataset(val_data, cache_path=f'./cached_dataset/val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}')
+        train_data = MemoryCachedDataset(train_data, transforms=augmentation)
+        val_data = MemoryCachedDataset(val_data)
 
         # Finally we wrap the dataset with pytorch dataloader
         train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, \
