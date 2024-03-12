@@ -18,6 +18,7 @@ from model.BaselineEyeTrackingModel import CNN_GRU
 from model.RecurrentVisionTransformer import RVT
 from model.SimpleVisionTransformer import SVT
 from model.FastRecurrentTransformer import FRT
+from model.EventTransformer import EVT
 from utils.training_utils import train_epoch, validate_epoch, top_k_checkpoints
 from utils.metrics import weighted_MSELoss, weighted_RMSE
 from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \

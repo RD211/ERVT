@@ -66,14 +66,15 @@ class Block(nn.Module):
         super().__init__()
         args = Namespace(**args, **kwargs)
         self.conv = nn.Conv2d(args.input_channels, args.output_channels, kernel_size=args.kernel_size, stride=args.stride, padding=args.kernel_size//2, groups=args.input_channels)
-        self.conv_combed = nn.Conv2d(args.output_channels*2, args.output_channels, kernel_size=7, stride=1, padding=7//2, groups=args.output_channels)
+        self.cross_att = nn.MultiheadAttention(embed_dim=args.output_channels, num_heads=1, dropout=0.0)
+        self.mlp_cross = MLP(dim=args.output_channels, channel_last=True, expansion_ratio=args.expansion_ratio, act_layer=args.mlp_act_layer, gated = args.mlp_gated, bias = args.mlp_bias, drop_prob=args.drop_prob)
         self.fsa = FullSelfAttention(channels=args.output_channels, partition_size=args.partition_size, dim_head=args.dim_head)
 
         self.ln1 = nn.LayerNorm(args.output_channels)
         self.ln2 = nn.LayerNorm(args.output_channels)
         self.ln3 = nn.LayerNorm(args.output_channels)
 
-        self.drop = DropPath(drop_prob=0.2)
+        self.drop = DropPath(drop_prob=0.0)
 
         self.mlpb = MLP(dim=args.output_channels, channel_last=True, expansion_ratio=args.expansion_ratio, act_layer=args.mlp_act_layer, gated = args.mlp_gated, bias = args.mlp_bias, drop_prob=args.drop_prob)
         self.conv_h = nn.Conv2d(args.output_channels, args.output_channels, kernel_size=7, stride=1, padding=7//2, groups=args.output_channels)
@@ -85,15 +86,17 @@ class Block(nn.Module):
         x_conv = self.ln1(x_conv)
 
         # We concat with h
+        B, H, W, C = x_conv.size()
+        x_conv = x_conv.view(x_conv.size(0), -1, x_conv.size(-1))
         if h == None:
-            h = torch.zeros_like(x_conv)
-        x_concat = torch.cat((x_conv, h), dim=3)
+            x_concat,_ = self.cross_att(x_conv, x_conv, x_conv)
+        else:
+            x_concat,_ = self.cross_att(h, x_conv, x_conv)
 
-        # We do conv
-        x_concat = x_concat.permute(0, 3, 1, 2)
-        x_concat = self.conv_combed(x_concat)
-        x_concat = x_concat.permute(0, 2, 3, 1)
+        x_concat = x_concat.view(B, H, W, C)
+        x_concat = x_concat + x_conv.view(B, H, W, C)
         x_concat = self.ln2(x_concat)
+        x_concat = self.mlp_cross(x_concat)
 
         x_bsa = self.fsa(x_concat)
         x_bsa = self.drop(x_bsa)
@@ -107,6 +110,7 @@ class Block(nn.Module):
 
         h = self.conv_h(x_bsa)
         h = h.permute(0, 2, 3, 1)
+        h = h.view(B, -1, h.size(-1))
         
 
         return x_bsa, h
@@ -136,7 +140,7 @@ class SVT(nn.Module):
 
         self.detection = LinearHead(args)
 
-        self.s0 = nn.Conv2d(args.in_channels, 32, kernel_size=3, stride=2, padding=3//2)
+        self.s0 = nn.Conv2d(args.in_channels, 32, kernel_size=7, stride=2, padding=7//2)
         self.pool_head = nn.MaxPool2d(2, 2)
 
     def forward(self, x, prev_states=None):

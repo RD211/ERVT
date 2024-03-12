@@ -24,7 +24,7 @@ def main(args):
 
     # Create a dummy input tensor
     factor = args.spatial_factor    
-    data = torch.ones((1,1,3,int(640*factor), int(480*factor)))
+    data = torch.ones((1,1,3,int(480*factor), int(640*factor)))
     data = data.to(args.device)
 
     # print model summary

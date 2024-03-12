@@ -80,6 +80,17 @@ class LatentEmbsCompressor(nn.Module):
         return z
     
 
+class PredictionHead(nn.Module):
+    def __init__(self, opt_dim):
+        super(PredictionHead, self).__init__()
+        self.latent_embs_compressor = LatentEmbsCompressor(opt_dim)
+        self.linear = nn.Linear(opt_dim, 2)
+    
+    def forward(self, z):
+        z = self.latent_embs_compressor(z)
+        z = self.linear(z)
+        return z
+
 ############################################################################################################
 # Event Transformer
 ############################################################################################################
@@ -95,7 +106,10 @@ class EVT(nn.Module):
         self.n_time_bins = args.n_time_bins
 
         self.FF1 = nn.Linear(self.P * self.P * args.n_time_bins, self.D)
+        self.FF1_2 = nn.Linear(self.D + 64, self.D)
         self.FF2 = nn.Linear(self.D, self.D)
+
+        self.memory = nn.Parameter(torch.normal(0.0, 0.2, (self.M, self.D)).clip(-2,2), requires_grad=True)
 
         self.transformer_block = TransformerBlock(
             opt_dim = self.D,
@@ -105,6 +119,14 @@ class EVT(nn.Module):
             heads = args.heads,
             cross_heads = args.cross_heads
         )
+
+        self.pos_encoding = nn.Parameter(fourier_features(
+            shape=(int(args.sensor_width * args.spatial_factor / self.P), int(args.sensor_height * args.spatial_factor / self.P)),
+            bands=16
+        ).permute(1,2,0), requires_grad=True)
+
+
+        self.prediction_head = PredictionHead(self.D)
 
     def partition(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -123,47 +145,45 @@ class EVT(nn.Module):
     def forward(self, x, memory = None):
         B, N, C, H, W = x.size()
 
+        # Permute to N, B, C, H, W
+        x = x.permute(1, 0, 2, 3, 4)
+        x = x.reshape(N*B, C, H, W)
+        x = self.partition(x)
+        x = x.view(N, B, -1, self.P * self.P * C)
+        x = self.FF1(x)
+        
+        # Add the positional encodings
+        pos_embs = self.pos_encoding.view(-1, self.pos_encoding.shape[-1]).expand(N, B, -1, -1)
+        x = torch.cat([x, pos_embs], dim=-1)
+
+        # We do FF1_2
+        x = self.FF1_2(x)
+
+        x = x.permute(0, 2, 1, 3) # N, T, B, C
+
         if memory is None:
-            # mean 0.0 and deviation 0.2    
-            memory = torch.normal(0.0, 0.2, (B, self.M, self.D)).to(x.device)
+            memory = self.memory.unsqueeze(1)
+            memory = memory.expand(-1, B, -1)
+
+        outputs = []
 
         for i in range(N):
-            x_t = x[:, i, :, :, :]
-            # We split into patches of PxP
-            x_t = self.partition(x_t)
-            print("We have split the input into patches of PxP this many times: ", x_t.shape)
-
-            # We flatten each patch
-            x_t = x_t.flatten(2)
-            print("We have flattened each patch this many times: ", x_t.shape)
-
-            # We apply the FF1
-            x_t = self.FF1(x_t)
-            
-            # We add positional encodings
-            # x_t = x_t + fourier_features(x_t.shape[1:], self.M)
-
+            x_t = x[i, :, :, :]
             # We do FF2
             x_skip = x_t
             x_t = self.FF2(x_t)
             x_t = x_t + x_skip
 
-            print("We have applied the FF1 and FF2 this many times: ", x_t.shape)
-            print("We have applied the FF1 and FF2 this many times: ", memory.shape)
-
             # We apply the transformer block
-            memory = self.transformer_block(x_t, memory)
+            x_t = self.transformer_block(x_t, memory)
+            memory = memory + x_t
 
+            # We apply the prediction head
+            output = self.prediction_head(x_t)
+            outputs.append(output)
+        
+        return torch.stack(outputs, dim=0).permute(1,0,2), memory
             
-            
-
-
-            
-
-
-            
-
-
 def fourier_features(shape, bands):
     # This first "shape" refers to the shape of the input data, not the output of this function
     dims = len(shape)
