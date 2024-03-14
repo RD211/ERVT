@@ -19,6 +19,7 @@ from model.RecurrentVisionTransformer import RVT
 from model.SimpleVisionTransformer import SVT
 from model.FastRecurrentTransformer import FRT
 from model.EventTransformer import EVT
+from model.MemEViT import MemEViT
 from utils.training_utils import train_epoch, validate_epoch, top_k_checkpoints
 from utils.metrics import weighted_MSELoss, weighted_RMSE
 from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
@@ -100,7 +101,7 @@ def main(args):
         print("Model has:", trainable_params, "trainable parameters")
         print("Model has:", non_trainable_params, "non-trainable parameters")
 
-        optimizer = optim.Adam(model.parameters(), lr=args.lr)
+        optimizer = optim.AdamW(model.parameters(), lr=args.lr)
         scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, args.gamma, -1, verbose = True)
 
         if args.loss == "mse":

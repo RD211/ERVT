@@ -5,6 +5,7 @@ from model.RecurrentVisionTransformer import RVT
 from model.SimpleVisionTransformer import SVT
 from model.FastRecurrentTransformer import FRT
 from model.EventTransformer import EVT
+from model.MemEViT import MemEViT
 from utils.timer import CudaTimer
 from torchinfo import summary
 
@@ -24,7 +25,7 @@ def main(args):
 
     # Create a dummy input tensor
     factor = args.spatial_factor    
-    data = torch.ones((1,1,3,int(480*factor), int(640*factor)))
+    data = torch.ones((1,1,1,int(480*factor), int(640*factor)))
     data = data.to(args.device)
 
     # print model summary
