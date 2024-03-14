@@ -16,7 +16,6 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from model.BaselineEyeTrackingModel import CNN_GRU
 from model.RecurrentVisionTransformer import RVT
-from model.Other import RVT2
 from model.FastRecurrentTransformer import FRT
 from utils.training_utils import train_epoch, validate_epoch, top_k_checkpoints
 from utils.metrics import weighted_MSELoss, weighted_RMSE
@@ -24,10 +23,10 @@ from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
     TemporalSubsample, NormalizeLabel, SliceLongEventsToShort, \
     EventSlicesToVoxelGrid, SliceByTimeEventsTargets, RandomSpatialAugmentor, EventSlicesToSpikeTensor
 import tonic.transforms as transforms
-from tonic import SlicedDataset, DiskCachedDataset
+from tonic import SlicedDataset, MemoryCachedDataset
 
 def train(model, train_loader, val_loader, criterion, optimizer, scheduler, args):
-    best_val_loss = float("inf")
+    best_val_p10 = 0
 
     # Training loop
     for epoch in range(args.num_epochs):
@@ -38,11 +37,11 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler, args
 
         if args.val_interval > 0 and (epoch + 1) % args.val_interval == 0:
             val_loss, val_metrics = validate_epoch(model, val_loader, criterion, args)
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
+            if val_metrics['val_p_acc_all']['val_p10_acc_all'] > best_val_p10:
+                best_val_p10 = val_metrics['val_p_acc_all']['val_p10_acc_all']
                 # save the new best model to MLflow artifact with 3 decimal places of validation loss in the file name
                 torch.save(model.state_dict(), os.path.join(mlflow.get_artifact_uri(), \
-                            f"model_best_ep{epoch}_val_loss_{val_loss:.4f}.pth"))
+                            f"model_best_ep{epoch}_val_p10_{val_metrics['val_p_acc_all']['val_p10_acc_all']:.4f}.pth"))
 
                 # DANGER Zone, this will delete files (checkpoints) in MLflow artifact
                 top_k_checkpoints(args, mlflow.get_artifact_uri())
@@ -148,7 +147,7 @@ def main(args):
         # in this case event voxel-grid
         post_slicer_transform = transforms.Compose([
             SliceLongEventsToShort(time_window=int(10000/temp_subsample_factor), overlap=0, include_incomplete=True),
-            EventSlicesToSpikeTensor(sensor_size=(int(640*factor), int(480*factor), 2), \
+            EventSlicesToVoxelGrid(sensor_size=(int(640*factor), int(480*factor), 2), \
                                     n_time_bins=args.n_time_bins, per_channel_normalize=args.voxel_grid_ch_normaization)
         ])
 
@@ -159,8 +158,8 @@ def main(args):
         augmentation = RandomSpatialAugmentor(dataset_wh = (1, 1), augm_config=args.data_augmentation)
 
         # cache the dataset to disk to speed up training. The first epoch will be slow, but the following epochs will be fast.
-        train_data = DiskCachedDataset(train_data, cache_path=f'./cached_dataset/train_tl_{args.train_length}_ts{args.train_stride}_ch{args.n_time_bins}', transforms=augmentation)
-        val_data = DiskCachedDataset(val_data, cache_path=f'./cached_dataset/val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}')
+        train_data = MemoryCachedDataset(train_data, transforms=augmentation)
+        val_data = MemoryCachedDataset(val_data)
 
         # Finally we wrap the dataset with pytorch dataloader
         train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, \

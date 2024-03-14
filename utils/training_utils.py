@@ -114,7 +114,7 @@ def top_k_checkpoints(args, artifact_uri):
     if len(model_checkpoints) > args.save_k_best:
         # sort all model checkpoints by validation loss in ascending order
         model_checkpoints = sorted([f for f in os.listdir(artifact_uri) if f.startswith("model_best_ep")], \
-                                    key=lambda x: float(x.split("_")[-1][:-4]))
+                                    key=lambda x: -float(x.split("_")[-1][:-4]))
         # delete the model checkpoint with the largest validation loss
         os.remove(os.path.join(artifact_uri, model_checkpoints[-1]))
 
