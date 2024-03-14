@@ -426,10 +426,15 @@ class RandomSpatialAugmentor:
 
         noisy_data = data + noise
         return noisy_data
+    
+    def reverse_input(self, input):
+        reversed_input = input[::-1, ::-1, :, :].copy()
+        return reversed_input
+        
 
     def random_time_shift(self, input, target):
         start = np.random.randint(0, input.shape[0])
-        return np.concatenate((input[start:], input[::-1]), axis=0)[:input.shape[0]], np.concatenate((target[start:], target[::-1]), axis=0)[:target.shape[0]]
+        return np.concatenate((input[start:], self.reverse_input(input)), axis=0)[:input.shape[0]], np.concatenate((target[start:], target[::-1]), axis=0)[:target.shape[0]]
 
     def __call__(self, input, target):
         self.randomize_augmentation()
@@ -438,7 +443,7 @@ class RandomSpatialAugmentor:
         if self.augm_state.apply_noise:
             input = self.add_random_noise(input)
         if self.augm_state.apply_time_reversal:
-            input, target = input[::-1].copy(), target[::-1].copy()
+            input, target = self.reverse_input(input), target[::-1].copy()
         if self.augm_state.apply_random_time_shift:
             input, target = self.random_time_shift(input, target)
         return (input, target)

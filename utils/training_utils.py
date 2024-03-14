@@ -42,9 +42,8 @@ def train_epoch(model, train_loader, criterion, optimizer, args):
 
             # avoid passing gradients further, detach the hidden states from the computational graph
             # NOTE: hidden is considered to be a list (corresponding to multiple stages)
-            if hidden is not None:
-                for i in range(len(hidden)):
-                    hidden[i] = hidden[i].detach()
+            for i in range(len(hidden)):
+                hidden[i] = (hidden[i][0].detach(), hidden[i][1].detach())
 
         outputs = torch.cat(acc_outputs, dim=1).detach().cpu() # concatenate over the time dimension
         total_loss += seq_loss / len(chuncks) # track the whole sequence loss
@@ -115,7 +114,7 @@ def top_k_checkpoints(args, artifact_uri):
     if len(model_checkpoints) > args.save_k_best:
         # sort all model checkpoints by validation loss in ascending order
         model_checkpoints = sorted([f for f in os.listdir(artifact_uri) if f.startswith("model_best_ep")], \
-                                    key=lambda x: float(x.split("_")[-1][:-4]))
+                                    key=lambda x: -float(x.split("_")[-1][:-4]))
         # delete the model checkpoint with the largest validation loss
         os.remove(os.path.join(artifact_uri, model_checkpoints[-1]))
 

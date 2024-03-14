@@ -87,6 +87,7 @@ class SelfAttentionCl(nn.Module):
 
         self.qkv = nn.Linear(dim, dim * 3, bias=bias)
         self.proj = nn.Linear(dim, dim, bias=bias)
+        self.drop = nn.Dropout(0.5)
 
 
     def forward(self, x: torch.Tensor):
@@ -97,7 +98,7 @@ class SelfAttentionCl(nn.Module):
 
         attn = (q @ k.transpose(-2, -1)) * self.scale
         attn = attn.softmax(dim=-1)
-
+        attn = self.drop(attn)
         x = (attn @ v).transpose(1, 2).reshape(restore_shape + (-1,))
         x = self.proj(x)
         return x

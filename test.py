@@ -17,7 +17,6 @@ from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
 import tonic.transforms as transforms
 from tonic import SlicedDataset, DiskCachedDataset
 from model.RecurrentVisionTransformer import RVT
-from model.SimpleVisionTransformer import SVT
 from model.FastRecurrentTransformer import FRT
 import torch
 from torch.profiler import profile, record_function, ProfilerActivity

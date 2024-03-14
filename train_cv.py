@@ -19,7 +19,6 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from model.BaselineEyeTrackingModel import CNN_GRU
 from model.RecurrentVisionTransformer import RVT
-from model.SimpleVisionTransformer import SVT
 from model.FastRecurrentTransformer import FRT
 from utils.training_utils import set_deterministic, train_epoch, validate_epoch, top_k_checkpoints
 from utils.metrics import log_avg_metrics, weighted_MSELoss, weighted_RMSE
@@ -96,7 +95,7 @@ def process_fold(fold, train_index, val_index, args, data, temp_subsample_factor
     # in this case event voxel-grid
     post_slicer_transform = transforms.Compose([
         SliceLongEventsToShort(time_window=int(10000/temp_subsample_factor), overlap=0, include_incomplete=True),
-        EventSlicesToVoxelGrid(sensor_size=(int(640*factor), int(480*factor), 2), \
+        EventSlicesToSpikeTensor(sensor_size=(int(640*factor), int(480*factor), 2), \
                                 n_time_bins=args.n_time_bins, per_channel_normalize=args.voxel_grid_ch_normaization)
     ])
 
@@ -120,8 +119,8 @@ def process_fold(fold, train_index, val_index, args, data, temp_subsample_factor
     train_data = MemoryCachedDataset(train_data, transforms=augmentation)
     val_data = MemoryCachedDataset(val_data)
 
-    train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=8, pin_memory=True)
-    val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=8, pin_memory=True)
+    train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    val_loader = DataLoader(val_data, batch_size=args.batch_size, shuffle=False, num_workers=4, pin_memory=True)
 
     with mlflow.start_run(run_name=args.run_name + f"_fold{fold+1} / {args.num_folds}"):
         # ====== MLflow logging ======
@@ -186,7 +185,7 @@ def main(args):
         train_metrics = []
         val_metrics = []
         args_dict = args
-        with ProcessPoolExecutor() as executor:
+        with ProcessPoolExecutor(max_workers=1) as executor:
             results = executor.map(process_fold, *zip(*[(fold, train_index, val_index, args_dict, copy.deepcopy(data), temp_subsample_factor, factor
                                                          ) for fold, (train_index, val_index) in enumerate(folds)]))
         for train_m, val_m in results:

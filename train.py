@@ -16,10 +16,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from model.BaselineEyeTrackingModel import CNN_GRU
 from model.RecurrentVisionTransformer import RVT
-from model.SimpleVisionTransformer import SVT
 from model.FastRecurrentTransformer import FRT
-from model.EventTransformer import EVT
-from model.MemEViT import MemEViT
 from utils.training_utils import train_epoch, validate_epoch, top_k_checkpoints
 from utils.metrics import weighted_MSELoss, weighted_RMSE
 from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
@@ -29,7 +26,7 @@ import tonic.transforms as transforms
 from tonic import SlicedDataset, MemoryCachedDataset
 
 def train(model, train_loader, val_loader, criterion, optimizer, scheduler, args):
-    best_val_loss = float("inf")
+    best_val_p10 = 0
 
     # Training loop
     for epoch in range(args.num_epochs):
@@ -40,11 +37,11 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler, args
 
         if args.val_interval > 0 and (epoch + 1) % args.val_interval == 0:
             val_loss, val_metrics = validate_epoch(model, val_loader, criterion, args)
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
+            if val_metrics['val_p_acc_all']['val_p10_acc_all'] > best_val_p10:
+                best_val_p10 = val_metrics['val_p_acc_all']['val_p10_acc_all']
                 # save the new best model to MLflow artifact with 3 decimal places of validation loss in the file name
                 torch.save(model.state_dict(), os.path.join(mlflow.get_artifact_uri(), \
-                            f"model_best_ep{epoch}_val_loss_{val_loss:.4f}.pth"))
+                            f"model_best_ep{epoch}_val_p10_{val_metrics['val_p_acc_all']['val_p10_acc_all']:.4f}.pth"))
 
                 # DANGER Zone, this will delete files (checkpoints) in MLflow artifact
                 top_k_checkpoints(args, mlflow.get_artifact_uri())
@@ -101,7 +98,7 @@ def main(args):
         print("Model has:", trainable_params, "trainable parameters")
         print("Model has:", non_trainable_params, "non-trainable parameters")
 
-        optimizer = optim.AdamW(model.parameters(), lr=args.lr)
+        optimizer = optim.Adam(model.parameters(), lr=args.lr)
         scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, args.gamma, -1, verbose = True)
 
         if args.loss == "mse":
