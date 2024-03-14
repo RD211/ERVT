@@ -4,12 +4,102 @@ import torch.nn as nn
 import math
 from typing import Optional, Union, Tuple, List, Type
 from argparse import Namespace
-from model.RecurrentVisionTransformer import FullSelfAttention
 from utils.timer import CudaTimer
 from model.base import GLU, MLP, LayerScale
 import torch.nn.functional as F
 
+class SelfAttentionCl(nn.Module):
+    """ Channels-last multi-head self-attention (B, ..., C) """
+    def __init__(
+            self,
+            dim: int,
+            dim_head: int = 32,
+            bias: bool = True):
+        super().__init__()
+        self.num_heads = dim // dim_head
+        self.dim_head = dim_head
+        self.scale = dim_head ** -0.5
 
+        self.qkv = nn.Linear(dim, dim * 3, bias=bias)
+        self.proj = nn.Linear(dim, dim, bias=bias)
+        self.drop = nn.Dropout(0.5)
+
+
+    def forward(self, x: torch.Tensor):
+        B = x.shape[0]
+        restore_shape = x.shape[:-1]
+
+        q, k, v = self.qkv(x).view(B, -1, self.num_heads, self.dim_head * 3).transpose(1, 2).chunk(3, dim=3)
+
+        attn = (q @ k.transpose(-2, -1)) * self.scale
+        attn = attn.softmax(dim=-1)
+        attn = self.drop(attn)
+        x = (attn @ v).transpose(1, 2).reshape(restore_shape + (-1,))
+        x = self.proj(x)
+        return x
+
+class UnifiedBlockGridAttention(nn.Module):
+    def __init__(self, channels: int, partition_size: int, dim_head: int = 32, mode: str = 'block'):
+        super().__init__()
+        assert mode in ['block', 'grid'], "Mode must be either 'block' or 'grid'."
+        
+        self.channels = channels
+        self.partition_size = partition_size
+        self.mode = mode
+        self.ln = nn.LayerNorm(channels)
+        self.mhsa = SelfAttentionCl(dim=channels, dim_head=dim_head)
+
+    def partition(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Partitions the input tensor based on the selected mode (block or grid).
+        """
+        B, H, W, C = x.shape
+        if self.mode == 'block':
+            if H % self.partition_size != 0 or W % self.partition_size != 0:
+                raise ValueError(f"Input size must be divisible by the window size. Got: {H}x{W}, window size: {self.partition_size}")
+            shape = (B, H // self.partition_size, self.partition_size, W // self.partition_size, self.partition_size, C)
+            permute_order = (0, 1, 3, 2, 4, 5)
+        else:  # grid mode
+            if H % self.partition_size != 0 or W % self.partition_size != 0:
+                raise ValueError(f"Input size must be divisible by the grid size. Got: {H}x{W}, grid size: {self.partition_size}")
+            shape = (B, self.partition_size, H // self.partition_size, self.partition_size, W // self.partition_size, C)
+            permute_order = (0, 2, 4, 1, 3, 5)
+        
+        x = x.view(shape)
+        windows = x.permute(permute_order).contiguous().view(-1, self.partition_size, self.partition_size, C)
+        return windows
+
+    def reverse_partition(self, windows: torch.Tensor, img_size: Tuple[int, int]) -> torch.Tensor:
+        """
+        Reverses the partitioning operation to reconstruct the original image shape.
+        """
+        H, W = img_size
+        C = windows.shape[-1]
+        if self.mode == 'block':
+            shape = (-1, H // self.partition_size, W // self.partition_size, self.partition_size, self.partition_size, C)
+            permute_order = (0, 1, 3, 2, 4, 5)
+        else:  # grid mode
+            shape = (-1, H // self.partition_size, W // self.partition_size, self.partition_size, self.partition_size, C)
+            permute_order = (0, 3, 1, 4, 2, 5)
+        
+        x = windows.view(shape)
+        x = x.permute(permute_order).contiguous().view(-1, H, W, C)
+        return x
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Applies self-attention based on the selected partitioning mode (block or grid).
+        """
+        B, H, W, C = x.size()
+
+        x = self.ln(x)  # Apply layer normalization
+        x = self.partition(x)  # Partition based on mode
+
+        attn_output = self.mhsa(x)  # Apply self-attention
+        attn_output = self.reverse_partition(attn_output, (H, W))  # Reverse partitioning
+
+        return attn_output
+    
 class LinearHead(nn.Module):
     """
     FC Layer detection head.
@@ -66,51 +156,58 @@ class Block(nn.Module):
         super().__init__()
         args = Namespace(**args, **kwargs)
         self.conv = nn.Conv2d(args.input_channels, args.output_channels, kernel_size=args.kernel_size, stride=args.stride, padding=args.kernel_size//2, groups=args.input_channels)
-        self.cross_att = nn.MultiheadAttention(embed_dim=args.output_channels, num_heads=1, dropout=0.0)
-        self.mlp_cross = MLP(dim=args.output_channels, channel_last=True, expansion_ratio=args.expansion_ratio, act_layer=args.mlp_act_layer, gated = args.mlp_gated, bias = args.mlp_bias, drop_prob=args.drop_prob)
-        self.fsa = FullSelfAttention(channels=args.output_channels, partition_size=args.partition_size, dim_head=args.dim_head)
+        self.conv_combed = nn.Conv2d(args.output_channels*2, args.output_channels, kernel_size=7, stride=1, padding=7//2, groups=args.output_channels)
+        self.fsa = UnifiedBlockGridAttention(channels=args.output_channels, partition_size=args.partition_size, dim_head=args.dim_head)
 
         self.ln1 = nn.LayerNorm(args.output_channels)
         self.ln2 = nn.LayerNorm(args.output_channels)
         self.ln3 = nn.LayerNorm(args.output_channels)
 
-        self.drop = DropPath(drop_prob=0.0)
+        self.drop = DropPath(drop_prob=0.2)
 
         self.mlpb = MLP(dim=args.output_channels, channel_last=True, expansion_ratio=args.expansion_ratio, act_layer=args.mlp_act_layer, gated = args.mlp_gated, bias = args.mlp_bias, drop_prob=args.drop_prob)
         self.conv_h = nn.Conv2d(args.output_channels, args.output_channels, kernel_size=7, stride=1, padding=7//2, groups=args.output_channels)
+        self.relu = nn.ReLU()
         self.conv_g = nn.Conv2d(args.output_channels, args.output_channels, kernel_size=7, stride=1, padding=7//2, groups=args.output_channels)
+
+        self.conv_f = nn.Conv2d(args.output_channels, args.output_channels//4, kernel_size=3, stride=1, padding=3//2, groups=args.output_channels//4)
     def forward(self, x: torch.Tensor, h: Optional[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         # We do conv
         x_conv = self.conv(x)
+        x_conv = self.relu(x_conv)
         x_conv = x_conv.permute(0, 2, 3, 1)
         x_conv = self.ln1(x_conv)
 
         # We concat with h
-        B, H, W, C = x_conv.size()
-        x_conv = x_conv.view(x_conv.size(0), -1, x_conv.size(-1))
         if h == None:
-            x_concat,_ = self.cross_att(x_conv, x_conv, x_conv)
-        else:
-            x_concat,_ = self.cross_att(h, x_conv, x_conv)
+            h = torch.zeros_like(x_conv)
+        x_concat = torch.cat((x_conv, h), dim=3)
 
-        x_concat = x_concat.view(B, H, W, C)
-        x_concat = x_concat + x_conv.view(B, H, W, C)
+        # We do conv
+        x_concat = x_concat.permute(0, 3, 1, 2)
+        x_concat = self.conv_combed(x_concat)
+        x_concat = x_concat.permute(0, 2, 3, 1)
+        x_concat = self.relu(x_concat)
         x_concat = self.ln2(x_concat)
-        x_concat = self.mlp_cross(x_concat)
 
         x_bsa = self.fsa(x_concat)
         x_bsa = self.drop(x_bsa)
         x_bsa = x_bsa + x_concat
+        x_bsa = self.relu(x_bsa)
         x_bsa = self.ln3(x_bsa)
         x_bsa = self.mlpb(x_bsa)
 
         x_bsa = x_bsa.permute(0, 3, 1, 2)
         x_bsa = self.conv_g(x_bsa)
+        x_bsa = self.relu(x_bsa)
 
 
         h = self.conv_h(x_bsa)
         h = h.permute(0, 2, 3, 1)
-        h = h.view(B, -1, h.size(-1))
+        h = self.relu(h)
+
+        x_bsa = self.conv_f(x_bsa)
+        x_bsa = self.relu(x_bsa)
         
 
         return x_bsa, h
@@ -141,7 +238,6 @@ class SVT(nn.Module):
         self.detection = LinearHead(args)
 
         self.s0 = nn.Conv2d(args.in_channels, 32, kernel_size=7, stride=2, padding=7//2)
-        self.pool_head = nn.MaxPool2d(2, 2)
 
     def forward(self, x, prev_states=None):
         B, N, C, H, W = x.size()
@@ -167,7 +263,6 @@ class SVT(nn.Module):
 
             # Pool
             xt = xt.permute(0, 2, 3, 1)
-            xt = self.pool_head(xt)
             # Flatten the tensor
             xt = torch.flatten(xt, 1)
 

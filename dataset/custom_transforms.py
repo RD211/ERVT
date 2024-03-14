@@ -9,6 +9,7 @@ import torch as th
 from dataclasses import dataclass
 import argparse
 import matplotlib.pyplot as plt
+import cv2
 
 class SliceByTimeEventsTargets:
     """
@@ -369,6 +370,7 @@ class AugmentationState:
     apply_noise: bool
     apply_time_reversal: bool
     apply_random_time_shift: bool
+    apply_crop: bool
 
 def torch_uniform_sample_scalar(min_value: float, max_value: float):
     assert max_value >= min_value, f'{max_value=} is smaller than {min_value=}'
@@ -395,13 +397,16 @@ class RandomSpatialAugmentor:
         self.apply_noise_max_factor = augm_config.max_noise_factor
         self.apply_noise_min_factor = augm_config.min_noise_factor
         self.apply_time_reversal = augm_config.time_reversal
+        self.apply_crop = augm_config.random_crop
         self.apply_random_time_shift = augm_config.random_time_shift
+        self.crop_factor = 0.8
 
         self.augm_state = AugmentationState(
             apply_h_flip=False,
             apply_noise=False,
             apply_time_reversal=False,
-            apply_random_time_shift=False
+            apply_random_time_shift=False,
+            apply_crop=False
             )
 
     def randomize_augmentation(self):
@@ -409,6 +414,7 @@ class RandomSpatialAugmentor:
         self.augm_state.apply_noise = self.apply_noise_prob > th.rand(1).item()
         self.augm_state.apply_time_reversal = self.apply_time_reversal > th.rand(1).item()
         self.augm_state.apply_random_time_shift = self.apply_random_time_shift > th.rand(1).item()
+        self.augm_state.apply_crop = self.apply_crop > th.rand(1).item()
 
     def h_flip(self, data):
         if len(data.shape) == 2:
@@ -431,14 +437,77 @@ class RandomSpatialAugmentor:
         start = np.random.randint(0, input.shape[0])
         return np.concatenate((input[start:], input[::-1]), axis=0)[:input.shape[0]], np.concatenate((target[start:], target[::-1]), axis=0)[:target.shape[0]]
 
+
+    def random_crop_and_resize(self, input, target):
+        """
+        Randomly crop the input to 80% of its original size and resize it back,
+        adjusting the target coordinates accordingly.
+
+        Args:
+            input (np.array): The input data with shape (N, C, H, W).
+            target (np.array): The target coordinates with shape (N, 2), assuming (x, y) format.
+
+        Returns:
+            np.array: The resized input data to original dimensions.
+            np.array: Adjusted target coordinates.
+        """
+        N, C, H, W = input.shape
+        # crop factor randomly but max crop_factor
+        crop = np.random.rand() * (1-self.crop_factor) + self.crop_factor
+        crop_H = int(H * crop)
+        crop_W = int(W * crop)
+
+        # Calculate random start points for the crop
+        start_H = np.random.randint(0, H - crop_H + 1)
+        start_W = np.random.randint(0, W - crop_W + 1)
+
+        cropped_and_resized_input = np.ones_like(input) * np.mean(input)
+        adjusted_target = target.copy()
+        for i in range(N):
+            # Crop and resize for each frame
+            cropped_frame = input[i, :, start_H:start_H+crop_H, start_W:start_W+crop_W]
+            cropped_frame = cropped_frame.transpose(1, 2, 0)
+            # resized_frame = cv2.resize(cropped_frame, (W,H), interpolation=cv2.INTER_LINEAR)
+            # Assuming resized_frame is in (H, W, C) format; if it's a single-channel image, add a color dimension
+            resized_frame = cropped_frame
+            if resized_frame.ndim == 2:
+                resized_frame = resized_frame[:, :, np.newaxis]
+            
+
+            resized_frame = resized_frame.transpose(2, 0, 1)
+
+            cropped_and_resized_input[i,:, 0:crop_H, 0:crop_W] += resized_frame
+            
+            # Adjust target coordinates
+            # Convert normalized coordinates to pixel space
+            pixel_x = target[i, 0] * W
+            pixel_y = target[i, 1] * H
+
+            # Adjust for crop and resize
+            adjusted_x = (pixel_x - start_W) / crop_W
+            adjusted_y = (pixel_y - start_H) / crop_H
+
+            # Ensure the adjusted coordinates are re-normalized to [0, 1] range
+            adjusted_target[i, 0] = adjusted_x
+            adjusted_target[i, 1] = adjusted_y
+
+            # If any are outside we return the original back
+            if adjusted_x < 0 or adjusted_y < 0 or adjusted_y > 1 or adjusted_x > 1:
+                return input, target
+
+        return cropped_and_resized_input, adjusted_target
+    
     def __call__(self, input, target):
         self.randomize_augmentation()
         if self.augm_state.apply_h_flip:
-            return self.h_flip(input), self.h_flip(target)
+            input =  self.h_flip(input)
+            target = self.h_flip(target)
         if self.augm_state.apply_noise:
             input = self.add_random_noise(input)
         if self.augm_state.apply_time_reversal:
             input, target = input[::-1].copy(), target[::-1].copy()
         if self.augm_state.apply_random_time_shift:
             input, target = self.random_time_shift(input, target)
+        if self.augm_state.apply_crop:
+            input, target = self.random_crop_and_resize(input, target)
         return (input, target)

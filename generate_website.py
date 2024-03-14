@@ -131,6 +131,10 @@ def main(args):
             if len(targets) > 0:
                 x, y = targets[i]
                 ax.plot(x*voxel_grid.shape[2], y*voxel_grid.shape[1], 'go')
+                # circle with 10 radius
+                circle = plt.Circle((x*voxel_grid.shape[2], y*voxel_grid.shape[1]), 10, color='g', fill=False)
+                ax.add_artist(circle)
+                
             return ax,
         ani = FuncAnimation(fig, update, frames=range(voxel_grid.shape[0]), blit=False)
         html_str = ani.to_jshtml()

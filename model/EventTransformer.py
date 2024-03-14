@@ -106,7 +106,7 @@ class EVT(nn.Module):
         self.n_time_bins = args.n_time_bins
 
         self.FF1 = nn.Linear(self.P * self.P * args.n_time_bins, self.D)
-        self.FF1_2 = nn.Linear(self.D + 64, self.D)
+        self.FF1_2 = nn.Linear(self.D + 4, self.D)
         self.FF2 = nn.Linear(self.D, self.D)
 
         self.memory = nn.Parameter(torch.normal(0.0, 0.2, (self.M, self.D)).clip(-2,2), requires_grad=True)
@@ -120,10 +120,7 @@ class EVT(nn.Module):
             cross_heads = args.cross_heads
         )
 
-        self.pos_encoding = nn.Parameter(fourier_features(
-            shape=(int(args.sensor_width * args.spatial_factor / self.P), int(args.sensor_height * args.spatial_factor / self.P)),
-            bands=16
-        ).permute(1,2,0), requires_grad=True)
+        self.positional_emb = nn.Parameter(self.sinusoidal_embedding(300, 4), requires_grad=False)
 
 
         self.prediction_head = PredictionHead(self.D)
@@ -151,9 +148,8 @@ class EVT(nn.Module):
         x = self.partition(x)
         x = x.view(N, B, -1, self.P * self.P * C)
         x = self.FF1(x)
-        
         # Add the positional encodings
-        pos_embs = self.pos_encoding.view(-1, self.pos_encoding.shape[-1]).expand(N, B, -1, -1)
+        pos_embs = self.positional_emb.view(-1, self.positional_emb.shape[-1]).expand(N, B, -1, -1)
         x = torch.cat([x, pos_embs], dim=-1)
 
         # We do FF1_2
@@ -183,44 +179,11 @@ class EVT(nn.Module):
             outputs.append(output)
         
         return torch.stack(outputs, dim=0).permute(1,0,2), memory
-            
-def fourier_features(shape, bands):
-    # This first "shape" refers to the shape of the input data, not the output of this function
-    dims = len(shape)
-
-    # Every tensor we make has shape: (bands, dimension, x, y, etc...)
-
-    # Pos is computed for the second tensor dimension
-    # (aptly named "dimension"), with respect to all
-    # following tensor-dimensions ("x", "y", "z", etc.)
-    pos = torch.stack(list(torch.meshgrid(
-        *(torch.linspace(-1.0, 1.0, steps=n) for n in list(shape))
-    )))
-    pos = pos.unsqueeze(0).expand((bands,) + pos.shape)
-
-    # Band frequencies are computed for the first
-    # tensor-dimension (aptly named "bands") with
-    # respect to the index in that dimension
-    band_frequencies = (torch.logspace(
-        math.log(1.0),
-        math.log(shape[0]/2),
-        steps=bands,
-        base=math.e
-    )).view((bands,) + tuple(1 for _ in pos.shape[1:])).expand(pos.shape)
-
-    # For every single value in the tensor, let's compute:
-    #             freq[band] * pi * pos[d]
-
-    # We can easily do that because every tensor is the
-    # same shape, and repeated in the dimensions where
-    # it's not relevant (e.g. "bands" dimension for the "pos" tensor)
-    result = (band_frequencies * math.pi * pos).view((dims * bands,) + shape)
-
-    # Use both sin & cos for each band, and then add raw position as well
-    # TODO: raw position
-    result = torch.cat([
-        torch.sin(result),
-        torch.cos(result),
-    ], dim=0)
-
-    return result
+    
+    @staticmethod
+    def sinusoidal_embedding(n_channels, dim):
+        pe = torch.FloatTensor([[p / (10000 ** (2 * (i // 2) / dim)) for i in range(dim)]
+                                for p in range(n_channels)])
+        pe[:, 0::2] = torch.sin(pe[:, 0::2])
+        pe[:, 1::2] = torch.cos(pe[:, 1::2])
+        return pe.unsqueeze(0)
