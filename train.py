@@ -151,8 +151,6 @@ def main(args):
         val_data = SlicedDataset(val_data_orig, val_slicer, transform=post_slicer_transform, metadata_path=f"./metadata/3et_val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}")
 
         augmentation = RandomSpatialAugmentor(dataset_wh = (1, 1), augm_config=args.data_augmentation)
-
-        # cache the dataset to disk to speed up training. The first epoch will be slow, but the following epochs will be fast.
         train_data = MemoryCachedDataset(train_data, transforms=augmentation)
         val_data = MemoryCachedDataset(val_data)
 

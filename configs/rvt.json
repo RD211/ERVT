@@ -16,14 +16,12 @@
       "kernel_size": 7,
       "output_channels": 32,
       "stride": 2,
-      "partition_size": 2,
       "dim_head": 32
     },
     {
       "kernel_size": 3,
       "output_channels": 64,
       "stride": 2,
-      "partition_size": 5,
       "dim_head": 32
     }
   ],

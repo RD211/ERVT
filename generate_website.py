@@ -1,16 +1,13 @@
 import argparse
 import json
 import os
-import mlflow
 import torch
 from torch.utils.data import DataLoader
-from model.BaselineEyeTrackingModel import CNN_GRU
-from model.RecurrentVisionTransformer import RVT
-from utils.training_utils import train_epoch, validate_epoch, top_k_checkpoints
+from model.RVT import RVT
 from utils.metrics import weighted_MSELoss
 from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, TemporalSubsample, SliceLongEventsToShort, EventSlicesToVoxelGrid, SliceByTimeEventsTargets, RandomSpatialAugmentor
 import tonic.transforms as transforms
-from tonic import SlicedDataset, DiskCachedDataset
+from tonic import SlicedDataset, MemoryCachedDataset
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
@@ -31,7 +28,6 @@ def main(args):
     # Parameters from args (now includes config file parameters)
     factor = args.spatial_factor
     temp_subsample_factor = args.temporal_subsample_factor
-    data_dir = args.data_dir
     n_time_bins = args.n_time_bins
     voxel_grid_ch_normaization = args.voxel_grid_ch_normaization
 
@@ -44,10 +40,6 @@ def main(args):
     # Then we define the raw event recording and label dataset, the raw events spatial coordinates are also downsampled
     train_data_orig = ThreeETplus_Eyetracking(save_to=args.data_dir, split="train", \
                     transform=transforms.Downsample(spatial_factor=factor), 
-                    target_transform=label_transform)
-    
-    test_data_orig = ThreeETplus_Eyetracking(save_to=data_dir, split="test",
-                    transform=transforms.Downsample(spatial_factor=factor),
                     target_transform=label_transform)
 
     slicing_time_window = args.train_length*int(10000/temp_subsample_factor)  # microseconds
@@ -91,11 +83,9 @@ def main(args):
     # We use the Tonic SlicedDataset class to handle the collation of the sub-sequences into batches.
     val_data = SlicedDataset(val_data_orig, val_slicer, transform=post_slicer_transform, metadata_path=f"./metadata/3et_val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}")
 
-    augmentation = RandomSpatialAugmentor(dataset_wh = (1, 1), augm_config=args.data_augmentation) 
-
     # cache the dataset to disk to speed up training. The first epoch will be slow, but the following epochs will be fast.
-    val_data = DiskCachedDataset(val_data, cache_path=f'./cached_dataset/val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}', transforms=augmentation)
-    train_data = DiskCachedDataset(train_data, cache_path=f'./cached_dataset/train_tl_{args.train_length}_ts{args.train_stride}_ch{args.n_time_bins}', transforms=augmentation)
+    train_data = MemoryCachedDataset(train_data)
+    val_data = MemoryCachedDataset(val_data)
 
     # Finally we wrap the dataset with pytorch dataloader
     val_loader = DataLoader(val_data, batch_size=1, shuffle=False, \
@@ -146,7 +136,6 @@ def main(args):
     <h1>Animation Gallery on Set """ + args.set + """</h1>
     """
 
-    # Assuming val_loader is defined and properly loaded
     for i, (voxel_grid, target) in tqdm.tqdm(enumerate(val_loader if args.set == "val" else train_loader)):
         voxel_grid = voxel_grid.to(args.device)
         pred = model(voxel_grid).detach().cpu().numpy()
@@ -167,7 +156,6 @@ def main(args):
     with open(args.output_path, 'w') as f:
         f.write(html_doc)
 
-
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
@@ -176,7 +164,7 @@ if __name__ == "__main__":
     parser.add_argument("--config_file", type=str, help="path to JSON configuration file", required=True)
     parser.add_argument("--checkpoint", type=str, help="path to checkpoint", required=True)
     parser.add_argument("--output_path", type=str, default='web/index.html')
-    parser.add_argument("--set", type=str, default="val", help="Dataset split to visualize (val or test)")
+    parser.add_argument("--set", type=str, default="val", help="Dataset split to visualize (train or val)")
 
     args = parser.parse_args()
 
