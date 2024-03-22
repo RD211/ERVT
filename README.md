@@ -15,7 +15,7 @@ This challenge aims to develop an **event-based eye-tracking system for precise 
 ## Our solution
 We have been inspired by the Recurrent Vision Transformer model that demonstrated great performance in event-based object detection. Starting from the original architecture we have made modifications in order to better fit our task and performance requirements.
 
-<img src="figures/b.svg">
+<img src="figures/architecture.svg">
 
 
 
