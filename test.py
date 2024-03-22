@@ -4,23 +4,14 @@ Affiliation: Insitute of Neuroinformatics, University of Zurich and ETH Zurich
 Email: wangzu@ethz.ch
 """
 
-import argparse, json, os, mlflow, csv
-from dataset.custom_transforms import EventSlicesToSpikeTensor
 import torch
-import torch.nn as nn
-import torch.optim as optim
+import argparse, json, os, csv
 from torch.utils.data import DataLoader
-from model.BaselineEyeTrackingModel import CNN_GRU
 from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
     TemporalSubsample, NormalizeLabel, SliceLongEventsToShort, \
     EventSlicesToVoxelGrid, SliceByTimeEventsTargets
 import tonic.transforms as transforms
-from tonic import SlicedDataset, DiskCachedDataset
-from model.RecurrentVisionTransformer import RVT
-from model.FastRecurrentTransformer import FRT
-import torch
-from torch.profiler import profile, record_function, ProfilerActivity
-
+from tonic import SlicedDataset
 
 def main(args):
     # Load hyperparameters from JSON configuration file
@@ -35,11 +26,6 @@ def main(args):
     else:
         raise ValueError("Please provide a JSON configuration file.")
 
-    # also dump the args to a JSON file in MLflow artifact
-    # print(mlflow.get_artifact_uri())
-    # with open(os.path.join(mlflow.get_artifact_uri(), "args.json"), 'w') as f:
-    #     json.dump(vars(args), f)
-
     # Define your model, optimizer, and criterion
     model = eval(args.architecture)(args).to(args.device)
 
@@ -50,7 +36,7 @@ def main(args):
     label_transform = transforms.Compose([
         ScaleLabel(factor),
         TemporalSubsample(temp_subsample_factor),
-        NormalizeLabel(pseudo_width=640*factor, pseudo_height=480*factor)
+        NormalizeLabel(pseudo_width=args.sensor_width*factor, pseudo_height=args.sensor_height*factor)
     ])
 
     test_data_orig = ThreeETplus_Eyetracking(save_to=args.data_dir, split="test", \
@@ -64,21 +50,11 @@ def main(args):
 
     post_slicer_transform = transforms.Compose([
         SliceLongEventsToShort(time_window=int(10000/temp_subsample_factor), overlap=0, include_incomplete=True),
-        EventSlicesToVoxelGrid(sensor_size=(int(640*factor), int(480*factor), 2), \
+        EventSlicesToVoxelGrid(sensor_size=(int(args.sensor_width*factor), int(args.sensor_height*factor), 2), \
                                     n_time_bins=args.n_time_bins, per_channel_normalize=args.voxel_grid_ch_normaization)
     ])
 
     test_data = SlicedDataset(test_data_orig, test_slicer, transform=post_slicer_transform)
-
-    # Uncomment the following lines to use the cached dataset
-    # Use with caution! Don't forget to update the cache path if you change the dataset or the slicing parameters
-
-    # test_data = SlicedDataset(test_data_orig, test_slicer, transform=post_slicer_transform, \
-    #     metadata_path=f"./metadata/3et_test_l{args.test_length}s{args.test_stride}_ch{args.n_time_bins}")
-
-    # cache the dataset to disk to speed up training. The first epoch will be slow, but the following epochs will be fast.
-    # test_data = DiskCachedDataset(test_data, \
-    #                               cache_path=f'./cached_dataset/test_l{args.test_length}s{args.test_stride}_ch{args.n_time_bins}')
 
     assert args.batch_size == 1 
     # otherwise the collate function will through an error. 
@@ -106,7 +82,7 @@ def main(args):
 
             # Important! 
             # cast the output back to the downsampled sensor space (80x60)
-            output = output * torch.tensor((640*factor, 480*factor)).to(args.device)
+            output = output * torch.tensor((args.sensor_width*factor, args.sensor_height*factor)).to(args.device)
 
             for sample in range(target_placeholder.shape[0]):
                 for frame_id in range(target_placeholder.shape[1]):

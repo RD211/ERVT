@@ -1,14 +1,12 @@
 import numpy as np
-import torch
 from tonic.slicers import (
     slice_events_by_time,
 )
 from tonic.functional import to_voxel_grid_numpy
-from typing import Any, List, Tuple
+from typing import List, Tuple
 import torch as th
 from dataclasses import dataclass
 import argparse
-import matplotlib.pyplot as plt
 
 class SliceByTimeEventsTargets:
     """
@@ -82,7 +80,6 @@ class SliceByTimeEventsTargets:
 
         return return_data, return_target
 
-
 class SliceLongEventsToShort:
     def __init__(self, time_window, overlap, include_incomplete):
         """
@@ -97,7 +94,6 @@ class SliceLongEventsToShort:
 
     def __call__(self, events):
         return slice_events_by_time(events, self.time_window, self.overlap, self.include_incomplete)
-
 
 class EventSlicesToVoxelGrid:
     def __init__(self, sensor_size, n_time_bins, per_channel_normalize):
@@ -229,11 +225,6 @@ class EventSlicesToSpikeTensor:
 
         return event_spike
 
-
-
-
-
-
 class SplitSequence:
     def __init__(self, sub_seq_length, stride):
         """
@@ -269,7 +260,6 @@ class SplitSequence:
             sub_labels.append(sub_seq_labels)
 
         return np.stack(sub_sequences), np.stack(sub_labels)
-
 
 class SplitLabels:
     def __init__(self, sub_seq_length, stride):
@@ -337,7 +327,6 @@ class TemporalSubsample:
         interval = int(1/self.temp_subsample_factor)
         return labels[::interval]
 
-
 class NormalizeLabel:
     def __init__(self, pseudo_width, pseudo_height):
         """
@@ -363,6 +352,10 @@ class NormalizeLabel:
         labels[:, 1] = labels[:, 1] / self.pseudo_height
         return labels
 
+############################################################################################################
+# Data Augmentation
+############################################################################################################
+    
 @dataclass
 class AugmentationState:
     apply_h_flip: bool
