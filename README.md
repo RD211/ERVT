@@ -22,7 +22,8 @@ We showcase how our model performs on the dataset in a visual way at our [websit
 <img src="figures/website.png"/>
 
 ## Running the model
-The full model can be found in `model/RVT.py`.
+The full model can be found in `model/RVT.py`. 
+
 ### Training a new model
 Trains a new model and logs it with mlflow.
 ```bash
@@ -38,6 +39,8 @@ We benchmark performance, inspect model size and parameter count.
 ```bash
 python bench.py --config_file rvt.json --checkpoint <path_to_checkpoint>
 ```
+### Note: In order to run any of the scripts make sure to use the provided `environment.yml` file.
+
 ## References
 
 ```
@@ -48,5 +51,14 @@ python bench.py --config_file rvt.json --checkpoint <path_to_checkpoint>
   pages={1--5},
   year={2023},
   organization={IEEE}
+}
+
+@misc{gehrig2023recurrent,
+      title={Recurrent Vision Transformers for Object Detection with Event Cameras}, 
+      author={Mathias Gehrig and Davide Scaramuzza},
+      year={2023},
+      eprint={2212.05598},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV}
 }
 ```
