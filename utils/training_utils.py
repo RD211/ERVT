@@ -2,7 +2,7 @@ import random
 import numpy as np
 import torch
 import os
-from utils.metrics import p_acc, p_acc_wo_closed_eye, px_euclidean_dist
+from utils.metrics import p_acc, px_euclidean_dist
 
 def train_epoch(model, train_loader, criterion, optimizer, args):
     model.train()
@@ -114,25 +114,6 @@ def top_k_checkpoints(args, artifact_uri):
     if len(model_checkpoints) > args.save_k_best:
         # sort all model checkpoints by validation loss in ascending order
         model_checkpoints = sorted([f for f in os.listdir(artifact_uri) if f.startswith("model_best_ep")], \
-                                    key=lambda x: float(x.split("_")[-1][:-4]))
+                                    key=lambda x: -float(x.split("_")[-1][:-4]))
         # delete the model checkpoint with the largest validation loss
         os.remove(os.path.join(artifact_uri, model_checkpoints[-1]))
-
-def set_deterministic(seed=42):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed) 
-
-    # torch.backends.cudnn.deterministic = True
-    # torch.backends.cudnn.benchmark = False
-    # torch.backends.cudnn.enabled = False
-    # os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8' # This was required to avoid a cuBLAS error because of CUDA 10.2
-    # torch.use_deterministic_algorithms(True)
-    # os.environ['PYTHONHASHSEED'] = str(seed)
-
-def seed_worker(worker_id):
-    worker_seed = torch.initial_seed() % 2**32
-    np.random.seed(worker_seed)
-    random.seed(worker_seed)

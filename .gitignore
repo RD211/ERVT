@@ -1,6 +1,5 @@
 __pycache__
 cached_dataset/
-metadata/
 mlruns
 trace.json
 submission.csv

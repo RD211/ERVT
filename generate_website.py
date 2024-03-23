@@ -1,20 +1,17 @@
 import argparse
 import json
 import os
-import mlflow
 import torch
 from torch.utils.data import DataLoader
-from model.BaselineEyeTrackingModel import CNN_GRU
-from model.RecurrentVisionTransformer import RVT
+from model.RVT import RVT
 from utils.training_utils import train_epoch, validate_epoch, top_k_checkpoints
 from utils.metrics import weighted_MSELoss
 from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, TemporalSubsample, SliceLongEventsToShort, EventSlicesToVoxelGrid, SliceByTimeEventsTargets, RandomSpatialAugmentor
 import tonic.transforms as transforms
-from tonic import SlicedDataset, DiskCachedDataset
+from tonic import SlicedDataset, MemoryCachedDataset
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
-from IPython.display import HTML
 import tqdm
 import matplotlib
 
@@ -91,17 +88,21 @@ def main(args):
     # We use the Tonic SlicedDataset class to handle the collation of the sub-sequences into batches.
     val_data = SlicedDataset(val_data_orig, val_slicer, transform=post_slicer_transform, metadata_path=f"./metadata/3et_val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}")
 
-    augmentation = RandomSpatialAugmentor(dataset_wh = (1, 1), augm_config=args.data_augmentation) 
-
+    test_data = SlicedDataset(test_data_orig, val_slicer, transform=post_slicer_transform, metadata_path=f"./metadata/3et_test_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}")
     # cache the dataset to disk to speed up training. The first epoch will be slow, but the following epochs will be fast.
-    val_data = DiskCachedDataset(val_data, cache_path=f'./cached_dataset/val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}', transforms=augmentation)
-    train_data = DiskCachedDataset(train_data, cache_path=f'./cached_dataset/train_tl_{args.train_length}_ts{args.train_stride}_ch{args.n_time_bins}', transforms=augmentation)
+    val_data = MemoryCachedDataset(val_data)
+    train_data = MemoryCachedDataset(train_data)
+    test_data = MemoryCachedDataset(test_data)
 
     # Finally we wrap the dataset with pytorch dataloader
     val_loader = DataLoader(val_data, batch_size=1, shuffle=False, \
                                     num_workers=int(os.cpu_count()-2))
     train_loader = DataLoader(train_data, batch_size=1, shuffle=True, \
                                   num_workers=int(os.cpu_count()-2), pin_memory=True)
+    
+    test_loader = DataLoader(test_data, batch_size=1, shuffle=False, \
+                                    num_workers=int(os.cpu_count()-2))
+    
     model = eval(args.architecture)(args).to(args.device)
 
     # load weights from a checkpoint
@@ -109,8 +110,6 @@ def main(args):
         model.load_state_dict(torch.load(args.checkpoint))
     else:
         raise ValueError("Please provide a checkpoint file.")
-        
-
 
     def plot_voxel_grid_as_rgb_to_html(voxel_grid, title, predictions=[], targets=[]):
         voxel_grid = np.moveaxis(voxel_grid, 1, -1)  # N, C, H, W -> N, H, W, C
@@ -118,9 +117,8 @@ def main(args):
         ax.set_title(title)
         ax.set_xticks([])
         ax.set_yticks([])
-
         def update(i):
-            ax.clear()  # Clear to avoid overlaying dots
+            ax.clear()
             ax.imshow(voxel_grid[i, :, :, :])
             ax.set_xticks([])
             ax.set_yticks([])
@@ -136,36 +134,43 @@ def main(args):
         plt.close(fig)
         return html_str
 
-    # Initialize HTML document
-    html_doc = """
-    <html>
-    <head>
-    <title>Animation Gallery on Set """ + args.set + """</title>
-    </head>
-    <body>
-    <h1>Animation Gallery on Set """ + args.set + """</h1>
-    """
+    # We create 3 folders for train, val, and test if they don't exist
+    os.makedirs(os.path.join(args.output_path, 'train'), exist_ok=True)
+    os.makedirs(os.path.join(args.output_path, 'val'), exist_ok=True)
+    os.makedirs(os.path.join(args.output_path, 'test'), exist_ok=True)
 
-    # Assuming val_loader is defined and properly loaded
-    for i, (voxel_grid, target) in tqdm.tqdm(enumerate(val_loader if args.set == "val" else train_loader)):
+
+    def wrap_in_html(html_str):
+        return f"""
+        <html>
+        <head>
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+        </head>
+        <body>
+        {html_str}
+        </body>
+        </html>
+        """
+
+    ############################################
+    # We evaluate on train, val and test at the same time
+    ############################################
+    model.eval()
+    for (i, (voxel_grid, target)), set in tqdm.tqdm([*zip(enumerate(train_loader), ["train"]*len(train_loader)), \
+                                            *zip(enumerate(val_loader), ["val"]*len(val_loader)), \
+                                            *zip(enumerate(test_loader), ["test"]*len(test_loader))], total=len(train_loader)+len(val_loader)+len(test_loader)):
         voxel_grid = voxel_grid.to(args.device)
-        pred = model(voxel_grid).detach().cpu().numpy()
-        pred = pred[0]
+        pred,_ = model(voxel_grid)
+        pred = pred.detach().cpu().numpy().reshape(pred.shape[1], pred.shape[2])
         voxel_grid_np = voxel_grid[0, :, :, :, :].cpu().numpy()
-        voxel_grid_np = (voxel_grid_np - voxel_grid_np.min()) / (voxel_grid_np.max() - voxel_grid_np.min())  # Normalize
-        pred = pred.reshape(pred.shape[0], pred.shape[2])
-        html_str = plot_voxel_grid_as_rgb_to_html(voxel_grid_np, f"Voxel grid {i}", pred, target[0][:,:2])
-        html_doc += html_str
-
-    # Close HTML document
-    html_doc += """
-    </body>
-    </html>
-    """
-
-    # Save the HTML document
-    with open(args.output_path, 'w') as f:
-        f.write(html_doc)
+        voxel_grid_np = (voxel_grid_np - voxel_grid_np.min()) / (voxel_grid_np.max() - voxel_grid_np.min())
+        html_str = plot_voxel_grid_as_rgb_to_html(voxel_grid_np, f"Voxel grid {i}", pred, target[0][:,:2] if set != "test" else [])
+        with open(os.path.join(args.output_path, set, f"{i}.html"), 'w') as f:
+            f.write(wrap_in_html(html_str))
+        
+    ############################################
+            
 
 
 if __name__ == "__main__":
@@ -175,8 +180,7 @@ if __name__ == "__main__":
     # a config file 
     parser.add_argument("--config_file", type=str, help="path to JSON configuration file", required=True)
     parser.add_argument("--checkpoint", type=str, help="path to checkpoint", required=True)
-    parser.add_argument("--output_path", type=str, default='web/index.html')
-    parser.add_argument("--set", type=str, default="val", help="Dataset split to visualize (val or test)")
+    parser.add_argument("--output_path", type=str, default='web/')
 
     args = parser.parse_args()
 

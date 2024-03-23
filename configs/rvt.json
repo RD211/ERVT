@@ -1,0 +1,62 @@
+{
+  "device": "cuda:6",
+  "mlflow_path": "/space/mlica/mlruns",
+  "experiment_name": "RVT",
+  "data_dir": "/space/mlica/event_data",
+  "run_name": "RVT",
+  "architecture": "RVT",
+  "expansion_ratio": 2,
+  "mlp_gated": true,
+  "gamma": 0.98,
+  "mlp_bias": true,
+  "drop_prob": 0.6,
+  "tbptt": 15,
+  "stages": [
+    {
+      "kernel_size": 7,
+      "output_channels": 32,
+      "stride": 2,
+      "dim_head": 32
+    },
+    {
+      "kernel_size": 3,
+      "output_channels": 64,
+      "stride": 2,
+      "dim_head": 32
+    }
+  ],
+  "lr": 0.001,
+  "num_epochs": 300,
+  "batch_size": 1,
+  "seed": 42,
+  "spatial_factor": 0.125,
+  "temporal_subsample_factor": 0.2,
+  "val_interval": 1,
+  "save_k_best": 2,
+  "pixel_tolerances": [
+    3,
+    5,
+    10,
+    15
+  ],
+  "sensor_width": 640,
+  "sensor_height": 480,
+  "train_stride": 15,
+  "val_stride": 30,
+  "train_length": 30,
+  "val_length": 30,
+  "in_channels": 3,
+  "n_time_bins": 3,
+  "voxel_grid_ch_normaization": true,
+  "test_stride": 30,
+  "test_length": 30,
+  "loss": "weighted_rmse",
+  "data_augmentation": {
+    "prob_hflip": 0.5,
+    "prob_noise": 0.5,
+    "max_noise_factor": 2.2,
+    "min_noise_factor": 0.05,
+    "time_reversal": 0,
+    "random_time_shift": 0
+  }
+}

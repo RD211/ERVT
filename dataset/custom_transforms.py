@@ -1,14 +1,12 @@
 import numpy as np
-import torch
 from tonic.slicers import (
     slice_events_by_time,
 )
 from tonic.functional import to_voxel_grid_numpy
-from typing import Any, List, Tuple
+from typing import List, Tuple
 import torch as th
 from dataclasses import dataclass
 import argparse
-import matplotlib.pyplot as plt
 
 class SliceByTimeEventsTargets:
     """
@@ -82,7 +80,6 @@ class SliceByTimeEventsTargets:
 
         return return_data, return_target
 
-
 class SliceLongEventsToShort:
     def __init__(self, time_window, overlap, include_incomplete):
         """
@@ -97,7 +94,6 @@ class SliceLongEventsToShort:
 
     def __call__(self, events):
         return slice_events_by_time(events, self.time_window, self.overlap, self.include_incomplete)
-
 
 class EventSlicesToVoxelGrid:
     def __init__(self, sensor_size, n_time_bins, per_channel_normalize):
@@ -135,7 +131,6 @@ class EventSlicesToVoxelGrid:
 
                     voxel_grid[c][non_zero_entries[c]] = (voxel_grid[c][non_zero_entries[c]] - mean_c) / (std_c + 1e-10)
             voxel_grids.append(voxel_grid)
-        print(np.array(voxel_grids).astype(np.float32).shape)
         return np.array(voxel_grids).astype(np.float32)
 
 class EventSlicesToSpikeTensor:
@@ -167,7 +162,6 @@ class EventSlicesToSpikeTensor:
         for event_slice in event_slices:
             spike = self.to_event_spike(event_slice)
             event_tensors.append(spike)
-        print(np.array(event_tensors).astype(np.float32).shape)
         return np.array(event_tensors).astype(np.float32)
 
 
@@ -228,14 +222,8 @@ class EventSlicesToSpikeTensor:
         event_spike = np.reshape(
             event_spike, (3 * self.n_time_bins, self.sensor_size[1], self.sensor_size[0])
         )
-        print("bbbbbbbbbbbbbbbbb")
-        print(event_spike.shape)
+
         return event_spike
-
-
-
-
-
 
 class SplitSequence:
     def __init__(self, sub_seq_length, stride):
@@ -272,7 +260,6 @@ class SplitSequence:
             sub_labels.append(sub_seq_labels)
 
         return np.stack(sub_sequences), np.stack(sub_labels)
-
 
 class SplitLabels:
     def __init__(self, sub_seq_length, stride):
@@ -340,7 +327,6 @@ class TemporalSubsample:
         interval = int(1/self.temp_subsample_factor)
         return labels[::interval]
 
-
 class NormalizeLabel:
     def __init__(self, pseudo_width, pseudo_height):
         """
@@ -366,6 +352,10 @@ class NormalizeLabel:
         labels[:, 1] = labels[:, 1] / self.pseudo_height
         return labels
 
+############################################################################################################
+# Data Augmentation
+############################################################################################################
+    
 @dataclass
 class AugmentationState:
     apply_h_flip: bool
@@ -429,10 +419,15 @@ class RandomSpatialAugmentor:
 
         noisy_data = data + noise
         return noisy_data
+    
+    def reverse_input(self, input):
+        reversed_input = input[::-1, ::-1, :, :].copy()
+        return reversed_input
+        
 
     def random_time_shift(self, input, target):
         start = np.random.randint(0, input.shape[0])
-        return np.concatenate((input[start:], input[::-1]), axis=0)[:input.shape[0]], np.concatenate((target[start:], target[::-1]), axis=0)[:target.shape[0]]
+        return np.concatenate((input[start:], self.reverse_input(input)), axis=0)[:input.shape[0]], np.concatenate((target[start:], target[::-1]), axis=0)[:target.shape[0]]
 
     def __call__(self, input, target):
         self.randomize_augmentation()
@@ -441,7 +436,7 @@ class RandomSpatialAugmentor:
         if self.augm_state.apply_noise:
             input = self.add_random_noise(input)
         if self.augm_state.apply_time_reversal:
-            input, target = input[::-1].copy(), target[::-1].copy()
+            input, target = self.reverse_input(input), target[::-1].copy()
         if self.augm_state.apply_random_time_shift:
             input, target = self.random_time_shift(input, target)
         return (input, target)

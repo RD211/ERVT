@@ -14,19 +14,18 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from model.BaselineEyeTrackingModel import CNN_GRU
-from model.RecurrentVisionTransformer import RVT
-from model.FastRecurrentTransformer import FRT
+from model.RVT import RVT
 from utils.training_utils import train_epoch, validate_epoch, top_k_checkpoints
 from utils.metrics import weighted_MSELoss, weighted_RMSE
 from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
     TemporalSubsample, NormalizeLabel, SliceLongEventsToShort, \
-    EventSlicesToVoxelGrid, SliceByTimeEventsTargets, RandomSpatialAugmentor, EventSlicesToSpikeTensor
+    EventSlicesToVoxelGrid, SliceByTimeEventsTargets, RandomSpatialAugmentor
 import tonic.transforms as transforms
-from tonic import SlicedDataset, DiskCachedDataset
+from tonic import SlicedDataset, MemoryCachedDataset
+from torchinfo import summary
 
 def train(model, train_loader, val_loader, criterion, optimizer, scheduler, args):
-    best_val_loss = float("inf")
+    best_val_p10 = 0
 
     # Training loop
     for epoch in range(args.num_epochs):
@@ -37,13 +36,13 @@ def train(model, train_loader, val_loader, criterion, optimizer, scheduler, args
 
         if args.val_interval > 0 and (epoch + 1) % args.val_interval == 0:
             val_loss, val_metrics = validate_epoch(model, val_loader, criterion, args)
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                # save the new best model to MLflow artifact with 3 decimal places of validation loss in the file name
+            if val_metrics['val_p_acc_all']['val_p10_acc_all'] > best_val_p10:
+                best_val_p10 = val_metrics['val_p_acc_all']['val_p10_acc_all']
+                # save the new best model to MLflow artifact with 3 decimal places of p10 accuracy in the file name
                 torch.save(model.state_dict(), os.path.join(mlflow.get_artifact_uri(), \
-                            f"model_best_ep{epoch}_val_loss_{val_loss:.4f}.pth"))
+                            f"model_best_ep{epoch}_val_p10_{val_metrics['val_p_acc_all']['val_p10_acc_all']:.4f}.pth"))
 
-                # DANGER Zone, this will delete files (checkpoints) in MLflow artifact
+
                 top_k_checkpoints(args, mlflow.get_artifact_uri())
 
             print(f"[Validation] at Epoch {epoch+1}/{args.num_epochs}: Val Loss: {val_loss:.4f}")
@@ -89,14 +88,10 @@ def main(args):
             if file.endswith(".py"):
                 mlflow.log_artifact(os.path.join("./model", file))
 
-        # Define your model, optimizer, and criterion
+
         model = eval(args.architecture)(args).to(args.device)
-        # print the number of parameters of the model
-        print(model)
-        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        non_trainable_params = sum(p.numel() for p in model.parameters() if not p.requires_grad)
-        print("Model has:", trainable_params, "trainable parameters")
-        print("Model has:", non_trainable_params, "non-trainable parameters")
+
+        summary(model, input_data=torch.ones((1,1,3,int(640*args.spatial_factor), int(480*args.spatial_factor))), verbose=2)
 
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
         scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, args.gamma, -1, verbose = True)
@@ -119,7 +114,7 @@ def main(args):
         label_transform = transforms.Compose([
             ScaleLabel(factor),
             TemporalSubsample(temp_subsample_factor),
-            NormalizeLabel(pseudo_width=640*factor, pseudo_height=480*factor)
+            NormalizeLabel(pseudo_width=args.sensor_width*factor, pseudo_height=args.sensor_height*factor)
         ])
 
         # Then we define the raw event recording and label dataset, the raw events spatial coordinates are also downsampled
@@ -147,7 +142,7 @@ def main(args):
         # in this case event voxel-grid
         post_slicer_transform = transforms.Compose([
             SliceLongEventsToShort(time_window=int(10000/temp_subsample_factor), overlap=0, include_incomplete=True),
-            EventSlicesToSpikeTensor(sensor_size=(int(640*factor), int(480*factor), 2), \
+            EventSlicesToVoxelGrid(sensor_size=(int(args.sensor_width*factor), int(args.sensor_height*factor), 2), \
                                     n_time_bins=args.n_time_bins, per_channel_normalize=args.voxel_grid_ch_normaization)
         ])
 
@@ -156,10 +151,8 @@ def main(args):
         val_data = SlicedDataset(val_data_orig, val_slicer, transform=post_slicer_transform, metadata_path=f"./metadata/3et_val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}")
 
         augmentation = RandomSpatialAugmentor(dataset_wh = (1, 1), augm_config=args.data_augmentation)
-
-        # cache the dataset to disk to speed up training. The first epoch will be slow, but the following epochs will be fast.
-        train_data = DiskCachedDataset(train_data, cache_path=f'./cached_dataset/train_tl_{args.train_length}_ts{args.train_stride}_ch{args.n_time_bins}', transforms=augmentation)
-        val_data = DiskCachedDataset(val_data, cache_path=f'./cached_dataset/val_vl_{args.val_length}_vs{args.val_stride}_ch{args.n_time_bins}')
+        train_data = MemoryCachedDataset(train_data, transforms=augmentation)
+        val_data = MemoryCachedDataset(val_data)
 
         # Finally we wrap the dataset with pytorch dataloader
         train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True, \
