@@ -17,6 +17,8 @@ We have been inspired by the Recurrent Vision Transformer model that demonstrate
 
 <img src="figures/architecture.svg"/>
 
+## Results
+We have demonstrated good performance on low memory requirements. Our model only needs `150k` parameters in order to achieve a `97.6%` p10 accuracy on the hidden dataset from [Kaggle](https://www.kaggle.com/competitions/event-based-eye-tracking-ais2024/leaderboard?).
 ## Website
 We showcase how our model performs on the dataset in a visual way at our [website](https://rd211.github.io/eye/).
 <img src="figures/website.png"/>
@@ -41,6 +43,9 @@ python bench.py --config_file rvt.json --checkpoint <path_to_checkpoint>
 ```
 ### Note: In order to run any of the scripts make sure to use the provided `environment.yml` file.
 
+
+### Pretrained weights
+The pretrained weights can be found [here](https://drive.google.com/file/d/1Rp2aamFuw46laHZ1QHIE4W1nYwBJuKhI/view?usp=drive_link). Make sure to not modify the configuration as this might prevent the model from loading the weights correctly.
 ## References
 
 ```
