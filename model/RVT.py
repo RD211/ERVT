@@ -32,7 +32,7 @@ class RVTBlock(nn.Module):
         self.mlpb = MLP(dim=args.output_channels, channel_last=True, expansion_ratio=args.expansion_ratio, gated = args.mlp_gated, bias = args.mlp_bias, drop_prob=args.drop_prob)
 
         # The LSTM module
-        self.lstm = DWSConvLSTM2d(dim=args.output_channels, dws_conv_kernel_size=args.kernel_size, cell_update_dropout=0.5)
+        self.lstm = DWSConvLSTM2d(dim=args.output_channels)
 
     def forward(self, x: torch.Tensor, h: Optional[torch.Tensor], c: Optional[torch.Tensor]) -> Tuple[torch.Tensor, torch.Tensor]:
         # Entry Convolution

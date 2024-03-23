@@ -13,12 +13,31 @@ This is instrumental in augmenting the immersive experience in AR/VR and expandi
 This challenge aims to develop an **event-based eye-tracking system for precise tracking of rapid eye movements** to produce lighter and more comfortable devices for a better user experience. Simultaneously, it promises to provide novel insights into neuroscience and cognitive research, deepening our understanding of these domains.
 
 ## Our solution
-We have been inspired by the Recurrent Vision Transformer model that demonstrated great performance in event-based object detection. Starting from the original architecture we have made modifications in order to better fit our task and performance requirements.
+We have been inspired by the Recurrent Vision Transformer model that demonstrated great performance in event-based object detection. Starting from the original architecture we have made modifications in order to better fit our task and performance requirements. Namely, changing the number of stages from four to only two and further simplifying the architecture to use Self Attention instead of a combination of Grid and Block attention modules.
 
-<img src="figures/architecture.svg">
+<img src="figures/architecture.svg"/>
 
+## Website
+We showcase how our model performs on the dataset in a visual way at our [website](https://rd211.github.io/eye/).
+<img src="figures/website.png"/>
 
-
+## Running the model
+The full model can be found in `model/RVT.py`.
+### Training a new model
+Trains a new model and logs it with mlflow.
+```bash
+python train.py --config_file rvt.json
+```
+### Creating predictions
+Creates predictions as a `submission.csv` file.
+```bash
+python test.py --config_file rvt.json --checkpoint <path_to_checkpoint>
+```
+### Benchmarking
+We benchmark performance, inspect model size and parameter count.
+```bash
+python bench.py --config_file rvt.json --checkpoint <path_to_checkpoint>
+```
 ## References
 
 ```

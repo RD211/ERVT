@@ -6,7 +6,7 @@
   "run_name": "RVT",
   "architecture": "RVT",
   "expansion_ratio": 2,
-  "mlp_gated": false,
+  "mlp_gated": true,
   "gamma": 0.98,
   "mlp_bias": true,
   "drop_prob": 0.6,

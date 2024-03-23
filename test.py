@@ -12,6 +12,7 @@ from dataset import ThreeETplus_Eyetracking, ScaleLabel, NormalizeLabel, \
     EventSlicesToVoxelGrid, SliceByTimeEventsTargets
 import tonic.transforms as transforms
 from tonic import SlicedDataset
+from model.RVT import RVT
 
 def main(args):
     # Load hyperparameters from JSON configuration file
