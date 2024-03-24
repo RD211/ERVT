@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from argparse import Namespace
 import math
-from typing import Optional, Tuple, Type
+from typing import Optional, Tuple
 
 ###################################################################################################
 # RVT Model
@@ -278,21 +278,6 @@ class GLU(nn.Module):
     def forward(self, x: torch.Tensor):
         x, gate = torch.tensor_split(self.proj(x), 2, dim=self.channel_dim)
         return x * self.gelu(gate)
-
-class BatchNorm2d(nn.BatchNorm2d):
-    '''(conv => BN => ReLU) * 2'''
-
-    def __init__(self, num_features, activation='none'):
-        super(BatchNorm2d, self).__init__(num_features=num_features)
-        if activation == 'leaky_relu':
-            self.activation = nn.LeakyReLU()
-        elif activation == 'none':
-            self.activation = lambda x:x
-        else:
-            raise Exception("Accepted activation: ['leaky_relu']")
-
-    def forward(self, x):
-        return self.activation(super(BatchNorm2d, self).forward(x))
 
 class MLP(nn.Module):
     def __init__(self,

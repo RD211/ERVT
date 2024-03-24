@@ -19,6 +19,12 @@ We have been inspired by the Recurrent Vision Transformer model that demonstrate
 
 ## Results
 We have demonstrated good performance on low memory requirements. Our model only needs `150k` parameters in order to achieve a `97.6%` p10 accuracy on the hidden dataset from [Kaggle](https://www.kaggle.com/competitions/event-based-eye-tracking-ais2024/leaderboard?).
+
+| Model                | P10 Accuracy | Parameters | Total mult-adds | Inference speed (batch size 1) |
+|----------------------|------------|------------|-----------------|--------------------------------|
+| Efficient RVT 2 Layers | 97.6% | 149,570    | 36.96M          | 1.06ms (RTX 3060 Laptop GPU)                         |
+
+
 ## Website
 We showcase how our model performs on the dataset in a visual way at our [website](https://rd211.github.io/eye/).
 <img src="figures/website.png"/>

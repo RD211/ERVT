@@ -32,12 +32,11 @@ def main(args):
     summary(model, input_data=data, verbose=2)
     
     # We need to set the model to evaluation mode and compile the model before benchmarking
-    torch.backends.cuda.enable_mem_efficient_sdp(False)
-    torch.backends.cuda.enable_flash_sdp(False)
-    torch.set_float32_matmul_precision('high')
+    torch.backends.cuda.enable_mem_efficient_sdp(True)
+    torch.set_float32_matmul_precision('medium')
     model.eval()
     model = torch.compile(model)
-    
+
     with torch.no_grad():
         for _ in range(1000):
             with CudaTimer(device=data.device, timer_name="model_inference"):

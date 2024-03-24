@@ -1,5 +1,5 @@
 {
-  "device": "cuda:6",
+  "device": "cuda:0",
   "mlflow_path": "/space/mlica/mlruns",
   "experiment_name": "RVT",
   "data_dir": "/space/mlica/event_data",
