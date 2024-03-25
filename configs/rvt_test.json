@@ -1,8 +1,8 @@
 {
   "device": "cuda:6",
-  "mlflow_path": "/space/mlica/mlruns",
+  "mlflow_path": "./mlruns",
   "experiment_name": "RVT",
-  "data_dir": "/space/mlica/event_data",
+  "data_dir": "./event_data",
   "run_name": "RVT",
   "architecture": "RVT",
   "expansion_ratio": 2,
@@ -26,7 +26,7 @@
     }
   ],
   "lr": 0.001,
-  "num_epochs": 300,
+  "num_epochs": 150,
   "batch_size": 1,
   "seed": 42,
   "spatial_factor": 0.125,
