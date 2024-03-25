@@ -65,7 +65,7 @@ def main(args):
 
     # load weights from a checkpoint
     if args.checkpoint:
-        model.load_state_dict(torch.load(args.checkpoint))
+        model.load_state_dict(torch.load(args.checkpoint, map_location='cuda', weights_only=False))
     else:
         raise ValueError("Please provide a checkpoint file.")
     
