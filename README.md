@@ -26,7 +26,7 @@ We have demonstrated good performance on low memory requirements. Our model only
 
 
 ## Website
-We showcase how our model performs on the dataset in a visual way at our [website](https://rd211.github.io/eye/).
+We showcase how our model performs on the dataset in a visual way at our [website](https://rd211.github.io/ervt/).
 <img src="figures/website.png"/>
 
 ## Running the model
