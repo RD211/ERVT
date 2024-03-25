@@ -91,7 +91,7 @@ def main(args):
 
         model = eval(args.architecture)(args).to(args.device)
 
-        summary(model, input_data=torch.ones((1,1,3,int(640*args.spatial_factor), int(480*args.spatial_factor))), verbose=2)
+        summary(model, input_data=torch.ones((1,1,3,int(640*args.spatial_factor), int(480*args.spatial_factor))).to(args.device), verbose=2)
 
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
         scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, args.gamma, -1, verbose = True)
